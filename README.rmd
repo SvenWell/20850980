@@ -6,6 +6,8 @@ output:
 
 ### Starting
 
+I was working in the README's of the individual questions and neglected this one until too late. They all feel incompete after running out of time. 
+
 I followed your code to get started, I hadn't nested your folders before and it worked well.
 
 I did however get stuck on creating a GitHub repository from GitHub desktop as you I could not find a way to add git ignores from the get go. So I did restart as I accidentally uploaded my data files to Git.
@@ -51,6 +53,25 @@ g <- CumulativeLineGraph(covid, caseordeath = "case")
     
 g
 ```
+
+Second Plot in the paper creates a seven-day moving average of the new cases per day or deaths per day.
+
+```{r}
+g <- Seven_day_MA(covid, "case")
+    
+g
+```
+
+Third plot in the paper looks at countries demographics to assess what affects the Caste Fatality Ratio of Covid-19.
+
+```{r}
+g <- Case_Fatality_Ratio(covid, "population")
+    
+g
+```
+
+
+### Question 2
 
 
 

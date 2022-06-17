@@ -1,7 +1,7 @@
 Year_plot <- function(data, year){
 
-    startyear <- ymd(paste(x,"0101", sep = ""))
-    endyear <- ymd(paste(x+1,"0101", sep = ""))
+    startyear <- ymd(paste(year,"0101", sep = ""))
+    endyear <- ymd(paste(year+1,"0101", sep = ""))
 
     data_year <- data %>% filter(date >= startyear & date < endyear)
 

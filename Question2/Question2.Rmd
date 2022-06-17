@@ -37,7 +37,7 @@ list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~sourc
 
 The first step is to read in the Data.
 
-```{r}
+```{r echo=T, results='hide'}
 london_weather <- quietly(read_csv)(file = "data/London/london_weather.csv")$result %>% 
     mutate(date = ymd(date))
 ```
@@ -57,7 +57,9 @@ london_weather_months <- london_weather %>%
               avgPrecipitation = mean(precipitation, na.rm = TRUE)) %>% 
     arrange(match(months, month.name))
 ```
+# Average Temperature for the Year
 
+You can choose any year and find the average temperatures.
 
 
 ```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Average Temperature for the Year.\\label{Figure1}", fig.ext = 'png', fig.height = 5, fig.width = 7}
@@ -67,17 +69,22 @@ g <- Year_plot(data = london_weather, year = 2019)
 g
 ```
 
+# Temperature range
 
+This aggregated all the years of data, since 1979, and founf the monthly range of temperatures. As one can see its a bit cold.
 
-```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Average Temperature for the Year.\\label{Figure1}", fig.ext = 'png', fig.height = 5, fig.width = 7}
+```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Historic Temperature Range.\\label{Figure2}", fig.ext = 'png', fig.height = 5, fig.width = 7}
 
 h <- Historic_Temp_Range(london_weather, "maroon")
 
 h
 ```
 
+# Cloudy
 
-```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Average Temperature for the Year.\\label{Figure1}", fig.ext = 'png', fig.height = 5, fig.width = 7}
+To top it off I found the percentage that London was cloudy through history. Using all the years of data one can clearly see that it leasn towards cloudy not sunny. With pretty high percentages of clouds in the Winter.
+
+```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Historic Cloudy Percentage.\\label{Figure3}", fig.ext = 'png', fig.height = 5, fig.width = 7}
 
 j <- Historic_Cloudy_Percent(data = london_weather)
 

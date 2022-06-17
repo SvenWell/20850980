@@ -16,14 +16,7 @@ output:
     # change to true for a self-contained document, but it'll be a litte slower for Pandoc to render
     self_contained: TRUE
 abstract: |
-    This is an abstract. Much can be written here. Uncomment this line to go without an abstract.
-    Abstracts have no spaces, but can have bullets.
-
-    Bullets can be created as follows
-
-    + You can add bullets, but do not add colons please.
-
-    + Line breaks are also not permitted.
+    This article takes a deeper look into the Covid-19 pandemic. 
 
 ---
 
@@ -35,32 +28,78 @@ list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~sourc
 
 \newpage
 
-# Introduction {-}
+# Introduction 
 
+With the Covid-19 pandemic still threatening us 2 years on from its discovery, we now have more information and data to discover and establish some insights.
 
-# Data  {-}
+# Data  
 
-```{r}
+This is the Data Collection for this question. 
+Data is sourced from @owidcoronavirus.
 
+```{r echo=T, results='hide'}
 covid_data <- DataCollect("data/Covid/")
 
 covid <- covid_data[[3]]
 
-covid_data[[1]] %>% view
 ```
 
 
-Want to plot Africa vs other continent on total cases and total deaths. 
-Maybe also 7 day moving average of new cases and new deaths in order to see the relative size of the spikes. 
+# Results
+
+Plotting Africa vs other continents of total cases and total deaths due to Covid-19. 
+
+```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Cumulative Cases of Covid-19.\\label{Figure1}", fig.ext = 'png', fig.height = 5, fig.width = 7}
+
+g <- CumulativeLineGraph(covid, caseordeath = "case")
+    
+g
+```
+
+As one can see Africa does not have as many cases as other continents, this could be to a lack of infrastructure and testing it the remoteness of some areas that the virus has not yet reached.
+
+```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Cumulative Deaths from Covid-19.\\label{Figure2}", fig.ext = 'png', fig.height = 5, fig.width = 7}
+
+g <- CumulativeLineGraph(covid, caseordeath = "death")
+    
+g
+```
+
+Africa does have a high proportion of deaths in comparison to the amount of cases of Covid-19.
+
+# Seven day moving average
+
+Seven day moving average of new cases and new deaths in order to see the relative size of the spikes for different continents
+
+```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Seven day Moving Average of new Cases of Covid-19.\\label{Figure3}", fig.ext = 'png', fig.height = 5, fig.width = 7}
+
+g <- Seven_day_MA(covid, "case")
+    
+g
+```
+
+The spikes in Africa for both cases and deaths can be observed quite clearly.
+
+```{r, warning =  FALSE, fig.align='center', fig.cap = "Seven day Moving Average of new Deaths from Covid-19.\\label{Figure4}", fig.ext = 'png', fig.height = 5, fig.width = 7}
+
+g <- Seven_day_MA(covid, "death")
+    
+g
+```
+
 
 Big difference plotting total cases and deaths vs total cases and deaths per million 
-```{r}
+```{r echo=F, results='hide'}
+
+# cases per million
 covid %>% 
     group_by(location) %>% 
     filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
     summarise(Cases = max(total_cases_per_million, na.rm=T), Deaths = max(total_deaths_per_million, na.rm=T) ) %>% 
     mutate(CaseFatalityRatio = Deaths/Cases*100) %>% 
     arrange(desc(Cases))
+
+# cases
 
 covid %>% 
     group_by(location) %>% 
@@ -69,99 +108,34 @@ covid %>%
     mutate(CaseFatalityRatio = Deaths/Cases*100) %>% 
     arrange(desc(Cases))
 
-g <- covid %>% 
-    arrange(date) %>%
-    group_by(location) %>% 
-    filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
-    select(location, date, new_cases_smoothed, new_deaths_smoothed) %>%
-    mutate(roll_mean = rollmean(new_cases_smoothed, 7, fill = NA)) %>% 
-    ggplot() +
-    geom_line(aes(x = date, y = roll_mean, color = location), alpha = 1, size = 0.4) +
-    theme_bw() +
-    theme(legend.position = "bottom", legend.title=element_blank()) +
-    labs(x = "", 
-         y = "7 day rolling average", 
-         title = "Daily new confirmed Covid-19 cases per million people", 
-         subtitle = "7-day rolling average cases of Covid-19 by continent", 
-         caption = "Data source: Ourworldindata.org") +
-    facet_wrap(~location, scales = "free_y")
-
-h <- covid %>% 
-    arrange(date) %>%
-    group_by(location) %>% 
-    filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
-    select(location, date, new_cases_smoothed, new_deaths_smoothed) %>%
-    mutate(roll_mean = rollmean(new_deaths_smoothed, 7, fill = NA)) %>% 
-    ggplot() +
-    geom_line(aes(x = date, y = roll_mean, color = location), alpha = 1, size = 0.4) +
-    theme_bw() +
-    theme(legend.position = "bottom", legend.title=element_blank()) +
-    labs(x = "", 
-         y = "7 day rolling average", 
-         title = "Daily new confirmed Covid-19 death per million people", 
-         subtitle = "7-day rolling average deaths from Covid-19 by continent", 
-         caption = "Data source: Ourworldindata.org") +
-    facet_wrap(~location, scales = "free_y")
-
-print(g)
-
-
 ```
-Data from @owidcoronavirus
 
-```{r}
-# Population density
-covid %>% 
-    group_by(location) %>% 
-    mutate(Cases = max(total_cases, na.rm=T), 
-           Deaths = max(total_deaths, na.rm=T), 
-           CaseFatalityRatio = Deaths/Cases*100) %>% 
-    select(location, population_density, Cases, Deaths, CaseFatalityRatio) %>% 
-    unique() %>% 
-    drop_na() %>% 
-    arrange(desc(Cases)) %>% 
-    head(20) %>% 
-    ggplot() +
-    geom_point(aes(x = population_density, y = CaseFatalityRatio, colour = location)) +
-    theme_bw() +
-    theme(legend.position = "bottom", legend.title=element_blank()) +
-    labs(x = "", 
-         y = "7 day rolling average", 
-         title = "Daily new confirmed Covid-19 death per million people", 
-         subtitle = "7-day rolling average deaths from Covid-19 by continent", 
-         caption = "Data source: Ourworldindata.org")
+# Case Fatality Ratio
 
-# Poverty percentage
-covid %>% 
-    group_by(location) %>% 
-    mutate(Cases = max(total_cases, na.rm=T), 
-           Deaths = max(total_deaths, na.rm=T), 
-           CaseFatalityRatio = Deaths/Cases*100) %>% 
-    select(location, extreme_poverty, Cases, Deaths, CaseFatalityRatio) %>% 
-    unique() %>% 
-    drop_na() %>% 
-    arrange(desc(Deaths)) %>% 
-    head(20) %>% 
-    ggplot() +
-    geom_point(aes(x = extreme_poverty, y = CaseFatalityRatio, colour = location)) +
-    theme_bw() +
-    theme(legend.position = "bottom", legend.title=element_blank()) +
-    labs(x = "Percentage Extreme Poverty", 
-         y = "Case Fatality Ratio", 
-         title = "Daily new confirmed Covid-19 death per million people", 
-         subtitle = "7-day rolling average deaths from Covid-19 by continent", 
-         caption = "Data source: Ourworldindata.org")
+Looking at countries demographics to assess what affects the Caste Fatality Ratio of Covid-19.
 
+```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Effect of population density on the Case Fatality Ratio.\\label{Figure5}", fig.ext = 'png', fig.height = 5, fig.width = 7}
 
-diabetes_prevalence
-cardiovasc_death_rate
-hospital_beds_per_thousand
-
+g <- Case_Fatality_Ratio(covid, "population")
+    
+g
 ```
-Growth rate hospital beds vs Growth rate Cases
-cannot find a proxy for hospital facility growth
 
-```{r}
+
+```{r,  warning =  FALSE, fig.align = 'center', fig.cap = "Effect of poverty density on the Case Fatality Ratio.\\label{Figure6}", fig.ext = 'png', fig.height = 5, fig.width = 7}
+
+g <- Case_Fatality_Ratio(covid, "poverty")
+    
+g
+```
+
+\newpage
+
+# Hospital growth vs the Growth of Covid-19
+
+This did not work as there was no change I could find in either the hospital beds or in the hand-washing facilities. Thus I could not find a proxy for hospital facility growth
+
+```{r echo=T, results='hide'}
 countries_most_cases <- covid %>% group_by(location) %>% 
     summarise(Cases = max(total_cases, na.rm=T)) %>% 
     arrange(desc(Cases)) %>% pull(location)
@@ -207,126 +181,6 @@ covid %>% group_by(location) %>%
          subtitle = "", 
          caption = "Data source: Ourworldindata.org") +
     facet_wrap(~location, scales = "free_y")
-
-colnames(covid)
-covid_data[[1]] %>% view
-
-hospital_beds_per_thousand
-icu_patients
-weekly_icu_admissions
-weekly_hosp_admissions
-```
-
-
-#  Methodology \label{Meth} {-}
-
-## Subsection {-}
-Ideally do not overuse subsections. It equates to bad writing.^[This is an example of a footnote by the way. Something that should also not be overused.]
-
-## Math section {-}
-
-Equations should be written as such:
-
-\begin{align}
-\beta = \sum_{i = 1}^{\infty}\frac{\alpha^2}{\sigma_{t-1}^2} \label{eq1} \\
-\int_{x = 1}^{\infty}x_{i} = 1 \notag
-\end{align}
-
-If you would like to see the equations as you type in Rmarkdown, use $ symbols instead (see this for yourself by adjusted the equation):
-
-$$
-\beta = \sum_{i = 1}^{\infty}\frac{\alpha^2}{\sigma_{t-1}^2} \\
-\int_{x = 1}^{\infty}x_{i} = 1
-$$
-
-Note again the reference to equation \ref{eq1}. Writing nice math requires practice. Note I used a forward slashes to make a space in the equations. I can also align equations using  __\&__, and set to numbering only the first line. Now I will have to type ``begin equation'' which is a native \LaTeX command. Here follows a more complicated equation:
-
-
-\begin{align}
-	y_t &= c + B(L) y_{t-1} + e_t   \label{eq2}    \\ \notag
-	e_t &= H_t^{1/2}  z_t ; \quad z_t \sim  N(0,I_N) \quad \& \quad H_t = D_tR_tD_t \\ \notag
-		D_t^2 &= {\sigma_{1,t}, \dots, \sigma_{N,t}}   \\ \notag
-		\sigma_{i,t}^2 &= \gamma_i+\kappa_{i,t}  v_{i, t-1}^2 +\eta_i  \sigma_{i, t-1}^2, \quad \forall i \\ \notag
-		R_{t, i, j} &= {diag(Q_{t, i, j}}^{-1}) . Q_{t, i, j} . diag(Q_{t, i, j}^{-1})  \\ \notag
-		Q_{t, i, j} &= (1-\alpha-\beta)  \bar{Q} + \alpha  z_t  z_t'  + \beta  Q_{t, i, j} \notag
-\end{align}
-
-Note that in \ref{eq2} I have aligned the equations by the equal signs. I also want only one tag, and I create spaces using ``quads''.
-
-See if you can figure out how to do complex math using the two examples provided in \ref{eq1} and \ref{eq2}.
-
-<!-- $$ -->
-<!-- This is a commented out section in the writing part. -->
-<!-- Comments are created by highlighting text, amnd pressing CTL+C -->
-<!-- \\begin{align} -->
-<!-- \\beta = \\alpha^2 -->
-<!-- \end{align} -->
-<!-- $$ -->
-
-## Results {-}
-
-Tables can be included as follows. Use the _xtable_ (or kable) package for tables. Table placement = H implies Latex tries to place the table Here, and not on a new page (there are, however, very many ways to skin this cat. Luckily there are many forums online!).
-
-```{r table-1, echo=TRUE, message=FALSE, warning=FALSE, results="asis"}
-library(knitr)
-library(kableExtra)
-
-data <- mtcars[1:5,] %>% tibble::as_tibble()
-
-table <- kable(data, row.names = TRUE,
-      caption = 'Table with kable() and kablestyling()',
-      format = "html", booktabs = T) %>%
-        kable_styling(full_width = T,
-                      latex_options = c("striped",
-                                        "scale_down",
-                                        "HOLD_position"),
-                      font_size = 13)
-table
-```
-
-To reference calculations __in text__, _do this:_ From table \@ref(tab:table-1) we see the average value of mpg is `r mean(mtcars[1:5,]$mpg)`. Notice the use of table-2 in the chunk name. That's the good stuff.
-
-\newpage
-
-
-## Model summary
-
-
-Check [this](https://vincentarelbundock.github.io/modelsummary/articles/modelsummary.html) link out for more. Note this package also plays nicely with gt, kableExtra, etc.
-
-```{r}
-
-library(modelsummary);library(gt)
-
-# modelsummary works well with gt:
-
-Tab <-
-
-datasummary_skim(swiss,
-type="numeric",
- histogram=T,
- title = "Summary: Numeric variables", output = "gt") %>%
-
-        # column labels
-    tab_spanner(label = 'Statistics', columns = c("Mean", "SD")) %>%
-    tab_spanner(label = 'Quantiles', columns = starts_with("P")) %>%
-    # footnote
-    tab_footnote(footnote = md("A very **important** Footnote."),
-                 locations = cells_body(rows = 3, columns = 1)) %>%
-
-    tab_options(data_row.padding = px(4),table.width = pct(60),
-            column_labels.font.size = pct(100),
-            column_labels.vlines.width = 1, table.font.size = pct(60))
-
-Tab
-```
-
-
-
-```{r}
-
-datasummary_correlation(mtcars)
-
 ```
 
 
@@ -335,13 +189,6 @@ datasummary_correlation(mtcars)
 <div id="refs"></div>
 
 
-# Appendix {-}
-
-## Appendix A {-}
-
-Some appendix information here
-
-## Appendix B {-}
 
 
 

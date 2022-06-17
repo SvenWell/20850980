@@ -46,6 +46,7 @@ covid_data <- DataCollect("data/Covid/")
 
 covid <- covid_data[[3]]
 
+covid_data[[1]] %>% view
 ```
 
 
@@ -58,14 +59,14 @@ covid %>%
     group_by(location) %>% 
     filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
     summarise(Cases = max(total_cases_per_million, na.rm=T), Deaths = max(total_deaths_per_million, na.rm=T) ) %>% 
-    mutate(Death2CaseRatio = Deaths/Cases*100) %>% 
+    mutate(CaseFatalityRatio = Deaths/Cases*100) %>% 
     arrange(desc(Cases))
 
 covid %>% 
     group_by(location) %>% 
     filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
     summarise(Cases = max(total_cases, na.rm=T), Deaths = max(total_deaths, na.rm=T) ) %>% 
-    mutate(Death2CaseRatio = Deaths/Cases*100) %>% 
+    mutate(CaseFatalityRatio = Deaths/Cases*100) %>% 
     arrange(desc(Cases))
 
 g <- covid %>% 
@@ -108,30 +109,113 @@ print(g)
 ```
 Data from @owidcoronavirus
 
+```{r}
+# Population density
+covid %>% 
+    group_by(location) %>% 
+    mutate(Cases = max(total_cases, na.rm=T), 
+           Deaths = max(total_deaths, na.rm=T), 
+           CaseFatalityRatio = Deaths/Cases*100) %>% 
+    select(location, population_density, Cases, Deaths, CaseFatalityRatio) %>% 
+    unique() %>% 
+    drop_na() %>% 
+    arrange(desc(Cases)) %>% 
+    head(20) %>% 
+    ggplot() +
+    geom_point(aes(x = population_density, y = CaseFatalityRatio, colour = location)) +
+    theme_bw() +
+    theme(legend.position = "bottom", legend.title=element_blank()) +
+    labs(x = "", 
+         y = "7 day rolling average", 
+         title = "Daily new confirmed Covid-19 death per million people", 
+         subtitle = "7-day rolling average deaths from Covid-19 by continent", 
+         caption = "Data source: Ourworldindata.org")
 
-<!-- The following is a code chunk. It must have its own unique name (after the r), or no name. After the comma follows commands for R which are self-explanatory. By default, the code and messages will not be printed in your pdf, just the output: -->
+# Poverty percentage
+covid %>% 
+    group_by(location) %>% 
+    mutate(Cases = max(total_cases, na.rm=T), 
+           Deaths = max(total_deaths, na.rm=T), 
+           CaseFatalityRatio = Deaths/Cases*100) %>% 
+    select(location, extreme_poverty, Cases, Deaths, CaseFatalityRatio) %>% 
+    unique() %>% 
+    drop_na() %>% 
+    arrange(desc(Deaths)) %>% 
+    head(20) %>% 
+    ggplot() +
+    geom_point(aes(x = extreme_poverty, y = CaseFatalityRatio, colour = location)) +
+    theme_bw() +
+    theme(legend.position = "bottom", legend.title=element_blank()) +
+    labs(x = "Percentage Extreme Poverty", 
+         y = "Case Fatality Ratio", 
+         title = "Daily new confirmed Covid-19 death per million people", 
+         subtitle = "7-day rolling average deaths from Covid-19 by continent", 
+         caption = "Data source: Ourworldindata.org")
 
-```{r }
 
-  # This is just a random plot to show you a plot. This is done if the getwd() does not point to your Template's directory.
-  # Set WD below to your project's working directory.
-
-  g <-
-  ggplot(data = mtcars) +
-  geom_point(aes(x = disp, y = hp, color = cyl)) +
-  theme_bw() +
-  # theme(legend.position = "none") +
-  theme(plot.title = element_text(size = 10)) +
-  theme(axis.title = element_text(size = 10),
-        axis.title.x = element_text()) +
-  labs(y = "y-axis", x = "x-axis", title = "Some amazing plot")
-
-g
+diabetes_prevalence
+cardiovasc_death_rate
+hospital_beds_per_thousand
 
 ```
+Growth rate hospital beds vs Growth rate Cases
+cannot find a proxy for hospital facility growth
 
+```{r}
+countries_most_cases <- covid %>% group_by(location) %>% 
+    summarise(Cases = max(total_cases, na.rm=T)) %>% 
+    arrange(desc(Cases)) %>% pull(location)
 
+countries_most_cases <- countries_most_cases[-c(1,2,3,4,5,6,7,8,10,21,24)]
 
+# failed ICU bed one
+covid %>% group_by(location) %>% 
+    filter(location %in% countries_most_cases[1:10]) %>% 
+    mutate(icugrowth = icu_patients/lag(icu_patients), 
+           bedgrowth = hospital_beds_per_thousand/lag(hospital_beds_per_thousand)) %>% 
+    select(date, location, icugrowth, bedgrowth) %>% 
+    drop_na() %>% 
+    ggplot() +
+    geom_line(aes(x = date, y = bedgrowth, color = location), alpha = 1, size = 0.4) +
+    theme_bw() +
+    theme(legend.position = "bottom", legend.title=element_blank()) +
+    labs(x = "", 
+         y = "ICU admissions growth rate", 
+         title = "", 
+         subtitle = "", 
+         caption = "Data source: Ourworldindata.org") +
+    facet_wrap(~location, scales = "free_y")
+    
+countries_with_facilities <- covid %>% group_by(location) %>% 
+    mutate(max = max(total_cases)) %>% 
+    select(date, location, handwashing_facilities, max) %>% 
+    drop_na() %>% arrange(desc(max)) %>% pull(location) %>% unique()
+
+#attempt handwashing facilities
+covid %>% group_by(location) %>% 
+    filter(location %in% countries_with_facilities[1:15]) %>% 
+    mutate(icugrowth = icu_patients/lag(icu_patients), 
+           handwashinggrowth = handwashing_facilities/lag(handwashing_facilities)) %>% 
+    select(date, location, icugrowth, handwashinggrowth) %>% 
+    ggplot() +
+    geom_line(aes(x = date, y = handwashinggrowth, color = location), alpha = 1, size = 0.4) +
+    theme_bw() +
+    theme(legend.position = "bottom", legend.title=element_blank()) +
+    labs(x = "", 
+         y = "ICU admissions growth rate", 
+         title = "", 
+         subtitle = "", 
+         caption = "Data source: Ourworldindata.org") +
+    facet_wrap(~location, scales = "free_y")
+
+colnames(covid)
+covid_data[[1]] %>% view
+
+hospital_beds_per_thousand
+icu_patients
+weekly_icu_admissions
+weekly_hosp_admissions
+```
 
 
 #  Methodology \label{Meth} {-}

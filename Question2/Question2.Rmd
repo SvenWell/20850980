@@ -29,7 +29,7 @@ abstract: |
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
-pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse)
+pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse, lubridate)
 list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
 ```
 
@@ -45,6 +45,50 @@ list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~sourc
 london_weather <- quietly(read_csv)(file = "data/London/london_weather.csv")$result
 
 ```
+
+Averages
+
+```{r}
+# Months
+london_weather_months <- london_weather %>% 
+    mutate(date = ymd(date)) %>% 
+    mutate(months = format(date, "%B")) %>% 
+    group_by(months) %>% 
+    summarise(avgCloud = mean(cloud_cover, na.rm = TRUE),
+              avgSunshine = mean(sunshine, na.rm = TRUE),
+              avgRadiation = mean(global_radiation, na.rm = TRUE),
+              avgMax = mean(max_temp, na.rm = TRUE),
+              avgMin = mean(min_temp, na.rm = TRUE),
+              avgPrecipitation = mean(precipitation, na.rm = TRUE)) %>% 
+    arrange(match(months, month.name))
+
+# Month Days
+london_weather_month_day <- london_weather %>% 
+    mutate(date = ymd(date)) %>% 
+    mutate(months = format(date, "%B"), days = format(date, '%A')) %>% 
+    group_by(months, days) %>% 
+    summarise(avgCloud = mean(cloud_cover, na.rm = TRUE),
+              avgSunshine = mean(sunshine, na.rm = TRUE),
+              avgRadiation = mean(global_radiation, na.rm = TRUE),
+              avgMax = mean(max_temp, na.rm = TRUE),
+              avgMin = mean(min_temp, na.rm = TRUE),
+              avgPrecipitation = mean(precipitation, na.rm = TRUE)) %>% 
+    arrange(match(months, month.name), match(days, weekdays(ISOdate(1, 1, 1:7))))
+
+london_weather_month_day %>% 
+    ggplot() + 
+    geom_ribbon(aes(months,ymin=avgMin,ymax=avgMax),color="yellow",alpha=0.5)
+
+london_weather_months %>% 
+    ggplot() +
+    geom_col(aes(x = months, y = avgMin)) +
+    geom_histogram(aes(x = months, y = avgMax)) +
+    scale_x_discrete(limits = month.name) +
+  labs(title = "Your Title", y = "Your Y Axis", x = "Your X Axis")
+
+```
+
+
 
 
 <!-- The following is a code chunk. It must have its own unique name (after the r), or no name. After the comma follows commands for R which are self-explanatory. By default, the code and messages will not be printed in your pdf, just the output: -->

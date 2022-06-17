@@ -4,13 +4,20 @@ output:
     variant: markdown_github
 ---
 
-# Purpose
+### Starting
 
-Purpose of this work folder.
+I followed your code to get started, I hadn't nested your folders before and it worked well.
 
-Ideally store a minimum working example data set in data folder.
+I did however get stuck on creating a GitHub repository from GitHub desktop as you I could not find a way to add git ignores from the get go. So I did restart as I accidentally uploaded my data files to Git.
 
-Add binary files in bin, and closed R functions in code. Human Readable settings files (e.g. csv) should be placed in settings/
+```{r, eval = F}
+
+fmxdat::make_project(Mac = TRUE)
+
+Texevier::create_template_html(directory = "/Users/svenwellmann/Desktop/Masters Semester 1/DatSci/Practical/Solution/20850980/", template_name = "Question1")
+Texevier::create_template_html(directory = "/Users/svenwellmann/Desktop/Masters Semester 1/DatSci/Practical/Solution/20850980/", template_name = "Question2")
+Texevier::create_template_html(directory = "/Users/svenwellmann/Desktop/Masters Semester 1/DatSci/Practical/Solution/20850980/", template_name = "Question3")
+```
 
 # Question 1 Solution
 
@@ -22,8 +29,28 @@ library(tidyverse)
 list.files('Question1/code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 ```
 
-Data
 
+### Question 1
+
+#### Loading the data
+
+```{r}
+covid_data <- DataCollect("Question1/data/Covid/")
+covid <- covid_data[[3]]
+```
+
+#### First plot
+
+This plot firstly looks at Africa against the other continents for the cumulative cases and the cumulative deaths.
+
+It shows that Africa at a counting level, falls way below the other continents. 
+
+
+```{r}
+g <- CumulativeLineGraph(covid, caseordeath = "case")
+    
+g
+```
 
 
 

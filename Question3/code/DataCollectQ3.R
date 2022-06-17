@@ -15,7 +15,7 @@ DataCollectQ3 <- function(datapath, findtype, csvlen = 0){
     findtype <- paste("(",findtype, ")", sep = "")
 
     if(csvlen != 0) {
-        data <- keep(datalist, grepl(datalist, pattern = findtype) & nchar(listnames) == csvlen) %>%
+        data <- keep(datalist, grepl(datalist, pattern = findtype) & nchar(datalist) == csvlen) %>%
             map(~silentread(.)) %>%
             plyr::rbind.fill()
     } else {

@@ -29,7 +29,7 @@ abstract: |
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
-pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse)
+pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse, lubridate, zoo)
 list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
 ```
 
@@ -44,7 +44,69 @@ list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~sourc
 
 covid_data <- DataCollect("data/Covid/")
 
+covid <- covid_data[[3]]
+
 ```
+
+
+Want to plot Africa vs other continent on total cases and total deaths. 
+Maybe also 7 day moving average of new cases and new deaths in order to see the relative size of the spikes. 
+
+Big difference plotting total cases and deaths vs total cases and deaths per million 
+```{r}
+covid %>% 
+    group_by(location) %>% 
+    filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
+    summarise(Cases = max(total_cases_per_million, na.rm=T), Deaths = max(total_deaths_per_million, na.rm=T) ) %>% 
+    mutate(Death2CaseRatio = Deaths/Cases*100) %>% 
+    arrange(desc(Cases))
+
+covid %>% 
+    group_by(location) %>% 
+    filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
+    summarise(Cases = max(total_cases, na.rm=T), Deaths = max(total_deaths, na.rm=T) ) %>% 
+    mutate(Death2CaseRatio = Deaths/Cases*100) %>% 
+    arrange(desc(Cases))
+
+g <- covid %>% 
+    arrange(date) %>%
+    group_by(location) %>% 
+    filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
+    select(location, date, new_cases_smoothed, new_deaths_smoothed) %>%
+    mutate(roll_mean = rollmean(new_cases_smoothed, 7, fill = NA)) %>% 
+    ggplot() +
+    geom_line(aes(x = date, y = roll_mean, color = location), alpha = 1, size = 0.4) +
+    theme_bw() +
+    theme(legend.position = "bottom", legend.title=element_blank()) +
+    labs(x = "", 
+         y = "7 day rolling average", 
+         title = "Daily new confirmed Covid-19 cases per million people", 
+         subtitle = "7-day rolling average cases of Covid-19 by continent", 
+         caption = "Data source: Ourworldindata.org") +
+    facet_wrap(~location, scales = "free_y")
+
+h <- covid %>% 
+    arrange(date) %>%
+    group_by(location) %>% 
+    filter(location %in% c("Europe", "Asia", "Africa", "North America", "South America", "Oceania", "Antarctica")) %>%
+    select(location, date, new_cases_smoothed, new_deaths_smoothed) %>%
+    mutate(roll_mean = rollmean(new_deaths_smoothed, 7, fill = NA)) %>% 
+    ggplot() +
+    geom_line(aes(x = date, y = roll_mean, color = location), alpha = 1, size = 0.4) +
+    theme_bw() +
+    theme(legend.position = "bottom", legend.title=element_blank()) +
+    labs(x = "", 
+         y = "7 day rolling average", 
+         title = "Daily new confirmed Covid-19 death per million people", 
+         subtitle = "7-day rolling average deaths from Covid-19 by continent", 
+         caption = "Data source: Ourworldindata.org") +
+    facet_wrap(~location, scales = "free_y")
+
+print(g)
+
+
+```
+Data from @owidcoronavirus
 
 
 <!-- The following is a code chunk. It must have its own unique name (after the r), or no name. After the comma follows commands for R which are self-explanatory. By default, the code and messages will not be printed in your pdf, just the output: -->

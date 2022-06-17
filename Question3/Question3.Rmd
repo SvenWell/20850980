@@ -45,7 +45,6 @@ list.files('..//Question1/code/', full.names = T, recursive = T) %>% as.list() %
 
 ```{r}
 datapath <- "data/Tennis"
-plyrr
 
 rankings <- DataCollectQ3(datapath = "data/Tennis", findtype = "rankings")
 players <- DataCollectQ3(datapath = "data/Tennis", findtype = "players")
@@ -55,8 +54,6 @@ doubles <- DataCollectQ3(datapath = "data/Tennis", findtype = "doubles")
 futures <- DataCollectQ3(datapath = "data/Tennis", findtype = "futures")
 chall <- DataCollectQ3(datapath = "data/Tennis", findtype = "chall")
 
-list.files(path = datapath, pattern = "*.csv", full.names = TRUE) %>%
-        as.list()
 
 ```
 

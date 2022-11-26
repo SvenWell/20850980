@@ -243,6 +243,8 @@ fmxdat::finplot(SA_spreads_inf_since2020, x.date.type = "%Y%m", x.vert = TRUE)
 
 What we witness is that Break-even Inflation and the long-term bond spread tracks very closely since 2020. We see inflation rising since 2021 and the 2 year yield spread remains somewhat stationary while inflation increases. 
 
+# Can look at this across the entirre dataframe except in % Changes
+
 ## Fifth Graph - Exchange rate and bonds 
 
 The below graph shows how the USD-ZAR exchange rate and the medium and long-term bond yields moved in sync at the beginning of 2020. The exchange rate lowered from its peak in 2020 while the long-term bond yields remained at their high level. 
@@ -315,23 +317,24 @@ Portfolio return per sector and per Index_Name.
 For Portfolio Returns we are going to use Safe_Return.portfolio function from PerformanceAnalytics and for that we need the data wide and in xts format
 
 ```{r}
-# First we get the weights of the ALSI and SWIX into xts format
-j200_weights <- T40 %>% select(date, Tickers, J200) %>% spread(Tickers, J200) %>% tbl_xts()
-j400_weights <- T40 %>% select(date, Tickers, J400) %>% spread(Tickers, J400) %>% tbl_xts()
-
-# Then we get the returns for all the Tickers into xts format
-T40_returns <- T40 %>% select(date, Tickers, Return) %>% spread(Tickers, Return) %>% tbl_xts()
-
-# Forcing the NA values to 0
-j200_weights[is.na(j200_weights)] <- 0
-j400_weights[is.na(j400_weights)] <- 0
-T40_returns[is.na(T40_returns)] <- 0
+# # First we get the weights of the ALSI and SWIX into xts format
+# j200_weights <- T40 %>% select(date, Tickers, J200) %>% spread(Tickers, J200) %>% tbl_xts()
+# j400_weights <- T40 %>% select(date, Tickers, J400) %>% spread(Tickers, J400) %>% tbl_xts()
+# 
+# # Then we get the returns for all the Tickers into xts format
+# T40_returns <- T40 %>% select(date, Tickers, Return) %>% spread(Tickers, Return) %>% tbl_xts()
+# 
+# # Forcing the NA values to 0
+# j200_weights[is.na(j200_weights)] <- 0
+# j400_weights[is.na(j400_weights)] <- 0
+# T40_returns[is.na(T40_returns)] <- 0
 ```
 
 Now we use the Safe_Return.portfolio function to get portfolio returns for each portfolio based on their seperate weightings
 ```{r}
 
 portfolio_return_function <- function(data = data, sector = "", index = ""){
+    stocks <- data
     
     if(!sector == ""){
         stocks <- data %>% filter(Sector %in% sector) %>% 

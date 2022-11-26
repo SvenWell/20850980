@@ -759,6 +759,11 @@ plot_grid(finplot(q2_p3), finplot(q2_p4), labels = list(title = "Comparing Cappe
 
 ## What it is 
 
+```{r}
+git rm -r --cached .;
+git add .;
+git commit -m "Untracked files issue resolved to fix .gitignore";
+```
 
 
 

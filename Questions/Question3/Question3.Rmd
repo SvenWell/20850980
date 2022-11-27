@@ -74,6 +74,11 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 5, fig.pos="H", fig.pos = 'H')
+
+pacman::p_load("xts", "tidyverse", "tbl2xts", "PerformanceAnalytics", "lubridate", "glue", "rmsfuns", "fmxdat", "tidyr", "devtools", "readr", "purrr", "cowplot",
+               "kableExtra")
+
+list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 ```
 
 
@@ -83,22 +88,430 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width 
 
 # Introduction \label{Introduction}
 
+```{r include=FALSE}
+T40 <- read_rds("data/T40.rds")
+RebDays <- read_rds("data/Rebalance_days.rds")
+usdzar <- read_rds("data/usdzar.rds")
+```
+
+# Compare ALSI and SWIX at different levels
+
+## ALSI and SWIX
+
+First we will us this function with no granulation to see the cumulative returns across all sectors and indices.
+
+```{r include=FALSE}
+portfolio_cum_return <- portfolio_return_function(T40) %>% group_by(Portfolio) %>% 
+    mutate(cumreturn_Rand = (cumprod(1 + Returns))) %>% 
+    mutate(cumreturn_Rand = cumreturn_Rand/first(cumreturn_Rand))
+
+portfolio_cum_return_plot <- portfolio_cum_return %>% 
+    ggplot() +
+    geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + 
+    fmxdat::fmx_cols() + 
+    labs(title = "Cumulative Returns for ALSI and SWIX", y = "Cumulative Returns", x = "") + 
+    fmxdat::theme_fmx(title.size = ggpts(25))
+```
+
+What we gather from this plot is that the ALSI (J200) underperformed compared to the SWIX (J400) until 2020 and then the roles reversed where the ALSI started performing better. 
+
+```{r}
+finplot(portfolio_cum_return_plot)
+```
+
+## Weights plot
+
+
+```{r include=FALSE}
+# First we get the weights of the ALSI and SWIX into xts format
+j200_weights <- T40 %>% select(date, Tickers, J200) %>% spread(Tickers, J200) %>% tbl_xts()
+j400_weights <- T40 %>% select(date, Tickers, J400) %>% spread(Tickers, J400) %>% tbl_xts()
+
+# Then we get the returns for all the Tickers into xts format
+stock_returns <- T40 %>% select(date, Tickers, Return) %>% spread(Tickers, Return) 
+
+# Forcing the NA values to 0
+# We can do this as NA weights are just 0
+j200_weights[is.na(j200_weights)] <- 0
+j400_weights[is.na(j400_weights)] <- 0
+
+# For NA's in returns it is safer to impute values for the NA's
+stock_returns <- impute_missing_returns(stock_returns, impute_returns_method = "Drawn_Distribution_Collective")
+stock_returns <- stock_returns %>% tbl_xts()
+
+
+J200_RetPort <- rmsfuns::Safe_Return.portfolio(stock_returns, 
+                                               weights = j200_weights, lag_weights = TRUE,
+                                               verbose = TRUE, contribution = TRUE, 
+                                               value = 1, geometric = TRUE) 
+
+J400_RetPort <- rmsfuns::Safe_Return.portfolio(stock_returns, 
+                                             weights = j400_weights, 
+                                             lag_weights = TRUE,
+                                             verbose = TRUE, contribution = TRUE, 
+                                             value = 1, geometric = TRUE) 
+
+# Need to clean and save the data
+
+# Clean and save portfolio returns and weights:
+J200_Contribution <- J200_RetPort$"contribution" %>% xts_tbl() 
+
+J200_BPWeight <- J200_RetPort$"BOP.Weight" %>% xts_tbl() 
+    
+J200_BPValue <- J200_RetPort$"BOP.Value" %>% xts_tbl()
+    
+# Clean and save portfolio returns and weights:
+J400_Contribution <- J400_RetPort$"contribution" %>% xts_tbl() 
+    
+J400_BPWeight <- J400_RetPort$"BOP.Weight" %>% xts_tbl()
+    
+J400_BPValue <- J400_RetPort$"BOP.Value" %>% xts_tbl() 
+
+names(J200_Contribution) <- c("date", names(J200_RetPort$"contribution"))
+names(J200_BPWeight) <- c("date", names(J200_RetPort$"BOP.Weight"))
+names(J200_BPValue) <- c("date", names(J200_RetPort$"BOP.Value"))
+names(J400_Contribution) <- c("date", names(J400_RetPort$"contribution"))
+names(J400_BPWeight) <- c("date", names(J400_RetPort$"BOP.Weight"))
+names(J400_BPValue) <- c("date", names(J400_RetPort$"BOP.Value"))
+
+resources_tickers <- T40 %>% filter(Sector %in% "Resources") %>% pull(Tickers) %>% unique
+industrials_tickers <- T40 %>% filter(Sector %in% "Industrials") %>% pull(Tickers) %>% unique
+financials_tickers <- T40 %>% filter(Sector %in% "Financials") %>% pull(Tickers) %>% unique
+
+J400_BPWeight$resource_weight <- rowSums(J400_BPWeight[, resources_tickers])
+J400_BPWeight$industrial_weight <- rowSums(J400_BPWeight[, industrials_tickers])
+J400_BPWeight$financial_weight <- rowSums(J400_BPWeight[, financials_tickers])
+
+J200_BPWeight$resource_weight <- rowSums(J200_BPWeight[, resources_tickers])
+J200_BPWeight$industrial_weight <- rowSums(J200_BPWeight[, industrials_tickers])
+J200_BPWeight$financial_weight <- rowSums(J200_BPWeight[, financials_tickers])
+```
+
+An interesting look into the portfolios is to see which industries are weighted highest between the SWIX and ALSI. Below is a plot of their different factor weights through time. We can see that since 2020 the ALSI lowered their weighting of Financial stocks and increased their weighting of resource stocks in comparison to the SWIX. 
+
+* ALSI (J200)
+
+```{r}
+J200_BPWeight %>% 
+  select(date, resource_weight, industrial_weight, financial_weight) %>% 
+  tbl_xts() %>% 
+  .[endpoints(.,'months')] %>% 
+  chart.StackedBar()
+```
+
+* SWIX (J400)
+
+```{r}
+J400_BPWeight %>% 
+  select(date, resource_weight, industrial_weight, financial_weight) %>% 
+  tbl_xts() %>% 
+  .[endpoints(.,'months')] %>% 
+  chart.StackedBar() 
+```
+
+
+## By Sector
+
+```{r include=FALSE}
+sectors <- T40 %>% pull(Sector) %>% unique()
+sector_return <- list()
+
+for(i in 1:length(sectors)){
+    # Loop through sectors and calculate returns and cumulative returns
+    sector_return[[i]] <- portfolio_return_function(T40, sector = sectors[i]) %>% group_by(Portfolio) %>% 
+      mutate(cumreturn_Rand = (cumprod(1 + Returns))) %>% # Start at 1
+      mutate(cumreturn_Rand = cumreturn_Rand/first(cumreturn_Rand)) %>% 
+      mutate(Sector = sectors[i])
+}
+
+# Rename tibbles
+names(sector_return) <- sectors
+sector_return
+
+# Combine Dataframes
+sectors_cum_return <- rbind(sector_return[[1]], sector_return[[2]], sector_return[[3]]) %>% arrange(date)
+    
+sectors_cum_return_plot <- sectors_cum_return %>% 
+    ggplot() +
+    geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + facet_wrap(~Sector) + fmxdat::fmx_cols() + 
+    labs(title = "Cumulative Returns per Sector for ALSI and SWIX", y = "Cumulative Returns", x = "") + 
+    fmxdat::theme_fmx(title.size = ggpts(25))
+```
+
+The plot below shows us the portfolio returns for the ALSI and the SWIX across their different sectors. We can evidently see that the cumulative returns from the Industrials is much larger that both the Financial or Resource sectors. We can also see that the ALSI (J200) has larger cumulative returns in both the Industrial and Resource sectors in comparison to the SWIX (J400). However, the SWIX outperforms the ALSI in the Financial sector. 
+
+```{r}
+finplot(sectors_cum_return_plot)
+```
+
+## By Index (Small-cap, Medium-cap and Large-cap)
+
+
+```{r include=FALSE}
+# Compare indices for ALSI and SWIX
+indices <- T40 %>%  pull(Index_Name) %>% na.omit(.) %>%  unique()
+indices_return <- list()
+
+for(i in 1:length(indices)){
+  # Loop through sectors and calculate returns and cumulative returns
+  indices_return[[i]] <- portfolio_return_function(T40,index = indices[i]) %>% group_by(Portfolio) %>% 
+  mutate(cumreturn_Rand = (cumprod(1 + Returns))) %>% # Start at 1
+  mutate(cumreturn_Rand = cumreturn_Rand/first(cumreturn_Rand)) %>% 
+  mutate(Index = indices[i])
+}
+
+# Rename tibbles
+names(indices_return) <- indices
+
+# Combine Dataframes
+indices_cum_return <- rbind(indices_return[[1]], indices_return[[2]], indices_return[[3]]) %>% arrange(date)
+    
+indices_cum_return_plot <- indices_cum_return %>% 
+        ggplot() +
+        geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + facet_wrap(~Index) + fmxdat::fmx_cols() + 
+        labs(title = "Cumulative Returns per Index for ALSI and SWIX", y = "Cumulative Returns", x = "") +
+        fmxdat::theme_fmx(title.size = ggpts(25))
+```
+
+The plot below shows that the ALSI outperforms the SWIX for both the Large and Mid caps. The ALSI had lower cumulative returns that the SWIX for large caps up until 2020. There is not enough data for small caps and thus they only contribute a very small amount of returns to either portfolio. 
+
+```{r}
+finplot(indices_cum_return_plot)
+```
+
+
+# Performance during currency volatile periods
+
+## Stratify the returns by high and low volatility
+
+```{r include=FALSE}
+zar <-  usdzar  %>% 
+    filter(date > ymd(20080101)) %>% 
+    mutate(Return = Price/lag(Price) - 1) %>% 
+    filter(date > first(date)) %>% 
+    select(-c(Price, Name))
+
+ZARSD <- zar %>% 
+    mutate(YearMonth = format(date, "%Y%B")) %>% 
+    group_by(YearMonth) %>% 
+    summarise(SD = sd(Return)*sqrt(52)) %>% 
+    # Top Decile Quantile overall (highly volatile month for ZAR:
+    mutate(TopQtile = quantile(SD, 0.8), BotQtile = quantile(SD, 0.2))
+
+Hi_Vol <- ZARSD %>% filter(SD > TopQtile) %>% pull(YearMonth)
+
+Low_Vol <- ZARSD %>% filter(SD < BotQtile) %>% pull(YearMonth)
+
+# Create generic function to compare performance:
+
+Perf_comparisons <- function(Idxs, YMs, Alias){
+  # For stepping through uncomment:
+  # YMs <- Hi_Vol
+  Unconditional_SD <- Idxs %>% 
+      group_by(Tickers) %>% 
+      mutate(Full_SD = sd(Return) * sqrt(252)) %>% 
+      filter(YearMonth %in% YMs) %>% 
+      summarise(SD = sd(Return) * sqrt(252), across(.cols = starts_with("Full"), .fns = max)) %>% 
+      arrange(desc(SD)) %>% mutate(Period = Alias) %>% 
+      group_by(Tickers) %>% 
+      mutate(Ratio = SD / Full_SD)
+  
+  Unconditional_SD
+}
+
+ALSI_SWIX <- portfolio_return_function(T40)
+
+# Prepare and Winzorise Returns
+ALSI_SWIX <- ALSI_SWIX %>% 
+    group_by(Portfolio) %>% 
+    mutate(YearMonth = format(date, "%Y%B")) %>% 
+    rename(Tickers = Portfolio, Return = Returns) %>% 
+    group_by(Tickers) %>% 
+    mutate(Top = quantile(Return, 0.99), Bot = quantile(Return, 0.01)) %>% 
+    mutate(Return = ifelse(Return > Top, Top, ifelse(Return < Bot, Bot, Return))) %>% ungroup()
+
+perf_hi <- Perf_comparisons(ALSI_SWIX, YMs = Hi_Vol, Alias = "High_Vol")
+
+perf_lo <- Perf_comparisons(ALSI_SWIX, YMs = Low_Vol, Alias = "Low_Vol")
+
+perf_hi_table <- perf_hi %>% kable() %>% add_header_above(c("High Volatility" = 5))
+perf_lo_table <- perf_lo %>% kable() %>% add_header_above(c("Low Volatility" = 5))
+```
+
+Here I find periods of high and low volatility of the USD-ZAR exchange rate. This is done by finding a upper and lower bound of volatility to 20\%. Stratifying for these high and low volatility periods we look at the different index's volatility (standard deviation) within those periods. 
+
+Below is the table of volatilities during times of high exchange rate volatility. What we can deduce is that in times of high exchange rate volatility, the ALSI (J200) has a higher volatility than the SWIX (J400). The SWIX also has a lower overall volatility in comparison to the ALSI.
+
+```{r}
+perf_hi_table
+```
+
+Now looking at the periods of low exchange rate volatility we can see that the ALSI (J200) has a lower volatility than the SWIX (J400). Although the ALSI is more volatile across the entire period when compared to the SWIX, during periods of low volatility the ALSI is more consistent. This can be seen with a lower ratio of volatility to full volatility.
+
+```{r}
+perf_lo_table
+```
+
+
+# Capping of the Index's 
+
+```{r include=FALSE}
+# first filter out the Effective rebalance days 
+effective_rebDays <- RebDays %>% filter(Date_Type %in% "Effective Date")
+
+rebalance_ALSI <- T40 %>% filter(date %in% effective_rebDays$date) %>% 
+    mutate(RebalanceTime = format(date, "%Y%B")) %>% 
+    select(date, Tickers, Return, J200, RebalanceTime) %>% 
+    rename(weight = J200) %>% 
+    # There are 27 NA's in this so we coalesce them to 0
+    mutate(weight = coalesce(weight , 0))
+
+# Checking if there are any NA's left
+any(is.na(rebalance_ALSI$weight))
+```
+```{r include=FALSE}
+# Apply Proportional_Cap_Foo to ALSI to get capped return for cap of 10%
+ALSI_capped_10 <- rebalance_ALSI %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.1) ) %>% 
+  select(-RebalanceTime)
+ 
+ALSI_wts_10 <- ALSI_capped_10 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+
+ALSI_rts_10 <- T40 %>% 
+    filter(Tickers %in% unique(ALSI_capped_10$Tickers)) %>% 
+    tbl_xts(cols_to_xts = Return, spread_by = Tickers)
+
+# Make NA values into 0's
+ALSI_wts_10[is.na(ALSI_wts_10)] <- 0
+
+ALSI_rts_10[is.na(ALSI_rts_10)] <- 0
+
+ALSI_capped_10 <- rmsfuns::Safe_Return.portfolio(R = ALSI_rts_10, weights = ALSI_wts_10, lag_weights = T) %>% 
+    xts_tbl() %>% 
+    rename(ALSI_10 = portfolio.returns)
+
+# Apply Proportional_Cap_Foo to ALSI to get capped return for cap of 6%
+ALSI_capped_6 <- rebalance_ALSI %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.06) ) %>% 
+  select(-RebalanceTime)
+ 
+ALSI_wts_6 <- ALSI_capped_6 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+
+ALSI_rts_6 <- T40 %>% 
+    filter(Tickers %in% unique(ALSI_capped_6$Tickers)) %>% 
+    tbl_xts(cols_to_xts = Return, spread_by = Tickers)
+
+# Make NA values into 0's
+ALSI_wts_6[is.na(ALSI_wts_6)] <- 0
+
+ALSI_rts_6[is.na(ALSI_rts_6)] <- 0
+
+ALSI_capped_6 <- rmsfuns::Safe_Return.portfolio(R = ALSI_rts_6, weights = ALSI_wts_6, lag_weights = T) %>% 
+    xts_tbl() %>% 
+    rename(ALSI_6 = portfolio.returns)
+
+# Both ALSI Capped indexes
+capped_ALSI <- left_join(ALSI_capped_10, ALSI_capped_6, by = "date") %>% 
+  pivot_longer(c("ALSI_6", "ALSI_10"), names_to = "Portfolio", values_to = "returns")
+
+capped_ALSI_plot <- capped_ALSI %>% 
+    group_by(Portfolio) %>%
+    mutate(Idx = cumprod(1 + returns)) %>% 
+    ggplot() + 
+    geom_line(aes(date, Idx, colour = Portfolio), alpha = 0.8) + 
+    labs(subtitle = "ALSI capped at 10% and 6%", x = "", y = "Cumulative Return") + 
+    fmx_cols() + 
+    fmxdat::theme_fmx(subtitle.size = ggpts(20))
+```
+
+To evaluate the effect of capping an index we cap both the ALSI and the SWIX at a level of 6\% and a level of 10\%, the returns based on the differing cap levels are then graphed for both indices. 
+
+Below we can see the difference in cumulative returns of the ALSI capped at a level of 6\% and capped at a level of 10\%. A larger cap level clearly shows higher cumulative returns and this makes sense as if you can have more of a high returning stock, overall returns can be higher. Although this is also inversely true and a lower cap may force more diversification and thus create a less risky portfolio. Cumulative returns followed quite closely with the lower-capped index doing marginally better until 2020 where the higher index outperformed. This can be due to the large volatility suring this time, a higher cap can capture more of the return. 
+
+```{r}
+finplot(capped_ALSI_plot)
+```
+
+
+```{r include=FALSE}
+# Apply Proportional_Cap_Foo to SWIX to get capped return for cap of 10%
+rebalance_SWIX <- T40 %>% filter(date %in% effective_rebDays$date) %>% 
+    mutate(RebalanceTime = format(date, "%Y%B")) %>% 
+    select(date, Tickers, Return, J400, RebalanceTime) %>% 
+    rename(weight = J400) %>% 
+    # There are 27 NA's in this so we coalesce them to 0
+    mutate(weight = coalesce(weight , 0))
+
+SWIX_capped_10 <- rebalance_SWIX %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.1) ) %>% 
+  select(-RebalanceTime)
+ 
+SWIX_wts_10 <- SWIX_capped_10 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+
+SWIX_rts_10 <- T40 %>% 
+    filter(Tickers %in% unique(SWIX_capped_10$Tickers)) %>% 
+    tbl_xts(cols_to_xts = Return, spread_by = Tickers)
+
+# Make NA values into 0's
+SWIX_wts_10[is.na(SWIX_wts_10)] <- 0
+
+SWIX_rts_10[is.na(SWIX_rts_10)] <- 0
+
+SWIX_capped_10 <- rmsfuns::Safe_Return.portfolio(R = SWIX_rts_10, weights = SWIX_wts_10, lag_weights = T) %>% 
+    xts_tbl() %>% 
+    rename(SWIX_10 = portfolio.returns)
+
+# Apply Proportional_Cap_Foo to SWIX to get capped return for cap of 6%
+SWIX_capped_6 <- rebalance_SWIX %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.06) ) %>% 
+  select(-RebalanceTime)
+ 
+SWIX_wts_6 <- SWIX_capped_6 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+
+SWIX_rts_6 <- T40 %>% 
+    filter(Tickers %in% unique(SWIX_capped_6$Tickers)) %>% 
+    tbl_xts(cols_to_xts = Return, spread_by = Tickers)
+
+# Make NA values into 0's
+SWIX_wts_6[is.na(SWIX_wts_6)] <- 0
+
+SWIX_rts_6[is.na(SWIX_rts_6)] <- 0
+
+SWIX_capped_6 <- rmsfuns::Safe_Return.portfolio(R = SWIX_rts_6, weights = SWIX_wts_6, lag_weights = T) %>% 
+    xts_tbl() %>% 
+    rename(SWIX_6 = portfolio.returns)
+
+# Both ALSI Capped indexes
+capped_SWIX <- left_join(SWIX_capped_10, SWIX_capped_6, by = "date") %>% 
+  pivot_longer(c("SWIX_6", "SWIX_10"), names_to = "Portfolio", values_to = "returns")
+
+capped_SWIX_plot <- capped_SWIX %>% 
+    group_by(Portfolio) %>%
+    mutate(Idx = cumprod(1 + returns)) %>% 
+    ggplot() + 
+    geom_line(aes(date, Idx, colour = Portfolio), alpha = 0.8) + 
+    labs(subtitle = "SWIX capped at 10% and 6%", x = "", y = "Cumulative Return") + 
+    fmx_cols() + 
+    fmxdat::theme_fmx(subtitle.size = ggpts(20))
+```
+
+Now for the SWIX, the results are different to that of the ALSI. The lower-capped index actually outperformed the higher capped index. 
+
+```{r}
+finplot(capped_SWIX_plot)
+```
+
+
 
 # Conclusion
 
-<!-- Make title of bibliography here: -->
-<!-- \newpage -->
-
-\newpage
-
-# References {-}
-
-<div id="refs"></div>
-
-
-# Appendix {-}
-
-## Appendix A {-}
-
-## Appendix B {-}
+What this analysis shows is that the two indexes are very similar.
 

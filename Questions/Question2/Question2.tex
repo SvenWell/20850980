@@ -135,6 +135,20 @@
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 
 %%% Include extra packages specified by user
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
 
 %%% Hard setting column skips for reports - this ensures greater consistency and control over the length settings in the document.
 %% page layout
@@ -224,32 +238,130 @@
 \section{\texorpdfstring{Introduction
 \label{Introduction}}{Introduction }}\label{introduction}}
 
+It was pointed out by economists that current yield spreads in local mid
+to longer dated bond yields have been historically high. Yield spreads
+between bonds of different maturities reflect how investors view the
+economic conditions.
+
+The price of a bond moves inversely to its yield, therefore a riskier
+bond is cheaper in price but greater in yield. Yield spreads are an
+indication of market sentiment. Relevant to the South African case, if
+investors are risk averse, they favour safer bonds, and therefore the
+spread between developed market bonds and emerging market bonds widen.
+
+In this paper, I review these avenues to investigate the
+higher-than-usual yield spreads in South Africa.
+
+\hypertarget{historical-view}{%
+\section{Historical view}\label{historical-view}}
+
+The first plot below shows the historical view of yields , whilst the
+second plot shows the historical view of yield spreads over the same
+period in South Africa. The bond yields included are the 3-month, 2-year
+and 10-year government bonds.
+
+\includegraphics{Question2_files/figure-latex/unnamed-chunk-3-1.pdf}
+
+This graph shows that over the last 20+ years bond yields have actually
+decreased relatively. With the largest decline that of the shortest
+maturity bond, the 3-month bond. What we can see in this graph is that
+the bond yields before 2020 were moving with one another. Since 2020 you
+can see a divergence of the Bond Yields, taking us to our next analysis:
+Yield Spreads.
+
+\includegraphics{Question2_files/figure-latex/unnamed-chunk-5-1.pdf}
+
+The second plot shows that current yield spreads are higher than the
+historical yield spreads. The spread between the 10-year and 3 month
+bonds are the greatest, followed by the difference between the 10 year
+and 2 year, and then the 2 year and 3 month. As shown in the first plot,
+the 10-year yield spiked upwards, while the 3-month and 2-year fall
+dramatically downwards. This plot also confirms that the spreads faced a
+significant spike in 2020.
+
+A zoomed-in look can be seen in the third plot below.
+
+\includegraphics{Question2_files/figure-latex/unnamed-chunk-7-1.pdf}
+
+\hypertarget{inflation}{%
+\section{Inflation}\label{inflation}}
+
+Here we look at the relationship between South African Inflation and the
+Break-even inflation. This relationship can be observed in the figure
+below.
+
+\includegraphics{Question2_files/figure-latex/unnamed-chunk-9-1.pdf}
+
+Break-even Inflation is the difference between the nominal yield on a
+fixed-rate investment and the real yield on an inflation-linked
+investment.
+
+If inflation averages more than the break-even, the inflation-linked
+investment will outperform the fixed-rate. Conversely, if inflation
+averages below the break-even, the fixed-rate will outperform the
+inflation-linked. What we can see from the graph above is that since
+2015 inflation has deviated from the break-even inflation with a large
+gap forming in 2020. Which shows that in South Africa, the market
+expectations for inflation are much higher than actual inflation. The
+break-even inflation has increased steadily from 2020 which shows market
+expectations of high inflation.
+
+\hypertarget{international-sentiment}{%
+\section{International Sentiment}\label{international-sentiment}}
+
+\hypertarget{usd-zar-exchange-rate-and-bond-yields}{%
+\subsection{USD-ZAR Exchange rate and Bond
+yields}\label{usd-zar-exchange-rate-and-bond-yields}}
+
+The below graph shows how the USD-ZAR exchange rate and the short,
+medium and long-term bond yields moved in sync at the beginning of 2020.
+The exchange rate lowered from its peak in 2020 while the long-term bond
+yields remained at their high level.
+
+Below is the Historical plot of Bond spreads and the USD-ZAR exchange
+rate. What is noticeable is that before 2010 the yield spreads move in
+opposite direction to the exchange rate. This changes after 2010 as we
+witness the exchange rate climb steadily and in 2020 the exchange rate
+and yield spreads move together.
+
+\includegraphics{Question2_files/figure-latex/unnamed-chunk-11-1.pdf}
+
+\hypertarget{volatility-indices-and-sa-yield-spread-graph}{%
+\subsection{Volatility Indices and SA Yield Spread
+Graph}\label{volatility-indices-and-sa-yield-spread-graph}}
+
+\includegraphics{Question2_files/figure-latex/unnamed-chunk-13-1.pdf}
+
+We can see that the spike in the VIX caused a shift in all the yield
+spreads. To further put this into context we will graph the 10-year to
+2-year yield spread of RSA and international countries in order to see
+the links between yield spreads and the VIX.
+
+\hypertarget{foreign-yields-and-vix}{%
+\subsection{Foreign Yields and VIX}\label{foreign-yields-and-vix}}
+
+We then look to a comparison of long-term yield spreads across different
+countries with the volatility index as a reference point. Below is a
+graph of the 10-year to 2-year yield spreads for South Africa, the
+United Kingdom and the Unites States. We can see below that all of the
+yield spreads initially spike with the VIX but the yield spreads for SA
+has the largest spike, with the UK next and the US last. This confirms
+that global risk sentiment, movement out of emerging market bonds and
+into safer developed markets bond was a contributing factor to higher
+yields in South Africa during the onset of COVID-19 in 2020.
+
+\includegraphics{Question2_files/figure-latex/unnamed-chunk-15-1.pdf}
+
 \hypertarget{conclusion}{%
 \section{Conclusion}\label{conclusion}}
 
-\newpage
-
-\hypertarget{references}{%
-\section*{References}\label{references}}
-\addcontentsline{toc}{section}{References}
-
-\hypertarget{refs}{}
-\begin{CSLReferences}{0}{0}
-\end{CSLReferences}
-
-\hypertarget{appendix}{%
-\section*{Appendix}\label{appendix}}
-\addcontentsline{toc}{section}{Appendix}
-
-\hypertarget{appendix-a}{%
-\subsection*{Appendix A}\label{appendix-a}}
-\addcontentsline{toc}{subsection}{Appendix A}
-
-Some appendix information here
-
-\hypertarget{appendix-b}{%
-\subsection*{Appendix B}\label{appendix-b}}
-\addcontentsline{toc}{subsection}{Appendix B}
+Capital outflows into safer developed market bonds caused the demand for
+South African bonds to decrease, and therefore their yields to increase.
+The SARB adopted a mild form quantitative easing for the first time
+which kept the 3-month and 2-year yields low. However, the 10-year yield
+increased, and in turn its spread with bonds of shorter maturity. Thus I
+do agree with the initial hypothesis that the yield spreads are greater
+than historical norms.
 
 \bibliography{Tex/ref}
 

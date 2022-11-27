@@ -82,7 +82,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 5, fig.pos="H", fig.pos = 'H')
-
+pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse, lubridate, fmxdat)
 ```
 
 
@@ -90,28 +90,254 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width 
 <!-- # Start Writing here: -->
 <!-- ############################## -->
 
+```{r include=FALSE}
+SA_bonds <- read_rds("Data/SA_Bonds.rds")
+BE_Infl <- read_rds("Data/BE_Infl.rds") # 10yr Break even inflation estimate
+bonds_2y <- read_rds("Data/bonds_2y.rds") # International 2yr spreads
+bonds_10y <- read_rds("Data/bonds_10y.rds") # International 10yr spreads
+usdzar <- read_rds("Data/usdzar.rds")
+ZA_Infl <- read_rds("Data/ZA_Infl.rds")
+IV <- read_rds("Data/IV.rds") # Volatility Index
+```
+
+
+
 # Introduction \label{Introduction}
 
+It was pointed out by economists that current yield spreads in local mid to longer dated bond yields have been historically high. Yield spreads between bonds of different maturities reflect how investors view the economic conditions. 
+
+The price of a bond moves inversely to its yield, therefore a riskier bond is cheaper in price but greater in yield. Yield spreads are an indication of market sentiment. Relevant to the South African case, if investors are risk averse, they favour safer bonds, and therefore the spread between developed market bonds and emerging market bonds widen.
+
+In this paper, I review these avenues to investigate the higher-than-usual yield spreads in South Africa.
+
+# Historical view 
+
+The first plot below shows the historical view of yields , whilst the second plot shows the historical view of yield spreads over the same period in South Africa. The bond yields included are the 3-month, 2-year and 10-year government bonds.
+
+```{r include=FALSE}
+# Transforming the Bonds data into tidy format for plotting
+SA_bonds_clean <- SA_bonds %>%  
+    arrange(date) %>% 
+    gather(Ticker, Yield, -date)
+
+SA_Bond_All <- SA_bonds_clean %>% 
+    ggplot() +
+    geom_line(aes(date, Yield, color = Ticker)) +
+    fmxdat::theme_fmx(title.size = ggpts(30),
+                      subtitle.size = ggpts(28),
+                      caption.size = ggpts(25),
+                      CustomCaption = T) + 
+  fmxdat::fmx_cols() + 
+  labs(x = "", 
+       y = "Bond Yields", 
+       caption = "Note:\nCalculation own",
+       title = "Bond Yields in South Africa across the 3 month, 2 year and 10 year maturities") + 
+    guides(color = F)
+```
+
+```{r}
+fmxdat::finplot(SA_Bond_All, x.vert = T, x.date.type = "%Y", x.date.dist = "2 years")
+```
+
+
+This graph shows that over the last 20+ years bond yields have actually decreased relatively. With the largest decline that of the shortest maturity bond, the 3-month bond. What we can see in this graph is that the bond yields before 2020 were moving with one another. Since 2020 you can see a divergence of the Bond Yields, taking us to our next analysis: Yield Spreads. 
+
+```{r include=FALSE}
+SA_Spreads <- SA_bonds %>% 
+    arrange(date) %>% 
+    group_by(date) %>% 
+    mutate(YS_2Yr_3M = ZA_2Yr-SA_3M, 
+           YS_10Yr_3M = ZA_10Yr-SA_3M, 
+           YS_10Yr_2Yr = ZA_10Yr-ZA_2Yr) %>% 
+    ungroup() %>% 
+    pivot_longer(c("YS_2Yr_3M", "YS_10Yr_3M", "YS_10Yr_2Yr"), names_to = "Spreads", values_to = "Rates") 
+
+bond_spreads <- SA_Spreads %>% 
+    ggplot() +
+    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
+    labs(title = "Short,Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="") +
+    fmxdat::theme_fmx() + 
+    fmxdat::fmx_cols()
+```
+
+```{r}
+fmxdat::finplot(bond_spreads, x.date.type = "%Y", x.vert = TRUE, x.date.dist = "2 years")
+```
+
+The second plot shows that current yield spreads are higher than the historical yield spreads. The spread between the 10-year and 3 month bonds are the greatest, followed by the difference between the 10 year and 2 year, and then the 2 year and 3 month. As shown in the first plot, the 10-year yield spiked upwards, while the 3-month and 2-year fall dramatically downwards. This plot also confirms that the spreads faced a significant spike in 2020.
+
+A zoomed-in look can be seen in the third plot below.
+
+```{r include=FALSE}
+bond_spreads_since2020 <- SA_Spreads %>% 
+    filter(date >= as.Date("2020/01/01")) %>% 
+    ggplot() +
+    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
+    labs(title = "Short, Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="") +
+    fmxdat::theme_fmx() + 
+    fmxdat::fmx_cols()
+```
+
+```{r}
+fmxdat::finplot(bond_spreads_since2020, x.date.type = "%Y%m", x.vert = TRUE )
+```
+
+# Inflation 
+
+Here we look at the relationship between South African Inflation and the Break-even inflation. This relationship can be observed in the figure below. 
+
+```{r include=FALSE}
+# First find the first available data range
+BE_inflation_start <- BE_Infl %>% pull(date) %>% first
+
+BE_Inflation <- rbind(ZA_Infl, 
+                      BE_Infl) %>% 
+    arrange(date) %>% 
+    filter(date >= BE_inflation_start)
+
+BE_Inflation_plot <- BE_Inflation %>% 
+    ggplot() +
+    geom_line(aes(date, Price, colour = Name), alpha = 0.8) +
+    labs(title = "Break-even 10 year Inflation and SA Inflation", 
+         y = "Percent", 
+         x ="", 
+         subtitle = "") +
+    fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(20)) + 
+    fmxdat::fmx_cols()
+```
+
+```{r}
+fmxdat::finplot(BE_Inflation_plot, x.date.type = "%Y%m", x.vert = TRUE)
+```
+
+Break-even Inflation is the difference between the nominal yield on a fixed-rate investment and the real yield on an inflation-linked investment. 
+
+If inflation averages more than the break-even, the inflation-linked investment will outperform the fixed-rate. Conversely, if inflation averages below the break-even, the fixed-rate will outperform the inflation-linked. What we can see from the graph above is that since 2015 inflation has deviated from the break-even inflation with a large gap forming in 2020. Which shows that in South Africa, the market expectations for inflation are much higher than actual inflation. The break-even inflation has increased steadily from 2020 which shows market expectations of high inflation. 
+
+# International Sentiment
+
+## USD-ZAR Exchange rate and Bond yields
+
+The below graph shows how the USD-ZAR exchange rate and the short, medium and long-term bond yields moved in sync at the beginning of 2020. The exchange rate lowered from its peak in 2020 while the long-term bond yields remained at their high level. 
+
+```{r include=FALSE}
+# Left_join daily bond yields and the USD-ZAR exchange rate
+YS_usd_zar <- left_join(SA_bonds %>% 
+    arrange(date) %>% 
+    group_by(date) %>% 
+    mutate(YS_2Yr_3M = ZA_2Yr-SA_3M, 
+           YS_10Yr_3M = ZA_10Yr-SA_3M, 
+           YS_10Yr_2Yr = ZA_10Yr-ZA_2Yr), 
+    usdzar %>% 
+        arrange(date) %>% 
+        rename(EX = Price) %>% 
+        select(-Name), 
+    by = "date") %>% 
+    pivot_longer(c("YS_2Yr_3M", "YS_10Yr_3M", "YS_10Yr_2Yr", "EX"), names_to = "Spreads", values_to = "Rates") %>% 
+    select(date, Spreads, Rates)
+
+YS_usd_zar_plot <- YS_usd_zar %>% 
+    ggplot() +
+    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
+    facet_wrap(~Spreads, scales = "free_y") +
+    guides(alpha = "none") + 
+    labs(title = "Short, Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="", subtitle = "Including USD/ZAR Exchange Rate") +
+    fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(20)) + 
+    fmxdat::fmx_cols()
+
+```
+
+Below is the Historical plot of Bond spreads and the USD-ZAR exchange rate. What is noticeable is that before 2010 the yield spreads move in opposite direction to the exchange rate. This changes after 2010 as we witness the exchange rate climb steadily and in 2020 the exchange rate and yield spreads move together.
+
+```{r}
+fmxdat::finplot(YS_usd_zar_plot, x.date.type = "%Y%m", x.vert = TRUE)
+```
+
+## Volatility Indices and SA Yield Spread Graph
+
+```{r include=FALSE}
+# Compare SA Spreads to VIX
+
+SA_Spreads_Int_VIX <- rbind(SA_Spreads %>% select(date, Spreads, Rates),
+                            IV %>% rename(Spreads = Name, Rates = Price)) %>% 
+    arrange(date) %>% filter(date >= as.Date("2020/01/01"))
+
+# PLot Spreads and Indices on Seperate Axis
+SA_Spreads_Int_VIX_plot <- SA_Spreads_Int_VIX %>% 
+    ggplot() +
+    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
+    facet_wrap(~Spreads, scales = "free_y") +
+    guides(alpha = "none") + 
+    labs(title = "Volatility Indices and SA Yield Spreads", x ="", subtitle = "Including VIX, V2X and VXEEM Volatility Indices") +
+    fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(18), legend.size = ggpts(15)) + 
+    fmxdat::fmx_cols()
+```
+
+```{r}
+fmxdat::finplot(SA_Spreads_Int_VIX_plot, x.date.type = "%Y%m", x.vert = TRUE)
+```
+
+We can see that the spike in the VIX caused a shift in all the yield spreads. To further put this into context we will graph the 10-year to 2-year yield spread of RSA and international countries in order to see the links between yield spreads and the VIX.
+
+
+## Foreign Yields and VIX
+
+We then look to a comparison of long-term yield spreads across different countries with the volatility index as a reference point. Below is a graph of the 10-year to 2-year yield spreads for South Africa, the United Kingdom and the Unites States. We can see below that all of the yield spreads initially spike with the VIX but the yield spreads for SA has the largest spike, with the UK next and the US last. This confirms that global risk sentiment, movement out of emerging market bonds and into safer developed markets bond was a contributing factor to higher yields in South Africa during the onset of COVID-19 in 2020.
+
+```{r include=FALSE}
+US_Spreads <- cbind(bonds_2y %>% 
+                        filter(Name %in% "US_2yr") %>% 
+                        filter(date >= as.Date("2020/01/01")), 
+                    bonds_10y %>% 
+                        filter(Name %in% "US_10Yr") %>% 
+                        arrange(date) %>% 
+                        filter(date >= as.Date("2020/01/01")) %>% 
+                        select(-date) %>% 
+                        rename(US10 = Name)) %>% 
+    arrange(date) %>% 
+    mutate(YS_10Yr_2Yr_US = Bond_10Yr - Bond_2Yr) %>% 
+    select(date, YS_10Yr_2Yr_US) %>% 
+    pivot_longer(YS_10Yr_2Yr_US, names_to = "Spreads", values_to = "Rates")
+
+UK_Spreads <- cbind(bonds_2y %>% 
+                        filter(Name %in% "UK_2yr") %>% 
+                        filter(date >= as.Date("2020/01/01")), 
+                    bonds_10y %>% 
+                        filter(Name %in% "UK_10Yr") %>% 
+                        arrange(date) %>% 
+                        filter(date >= as.Date("2020/01/01")) %>% 
+                        select(-date) %>% 
+                        rename(US10 = Name)) %>% 
+    arrange(date) %>% 
+    mutate(YS_10Yr_2Yr_UK = Bond_10Yr - Bond_2Yr) %>% 
+    select(date, YS_10Yr_2Yr_UK) %>% 
+    pivot_longer(YS_10Yr_2Yr_UK, names_to = "Spreads", values_to = "Rates")
+
+
+All_spreads <- rbind(SA_Spreads_Int_VIX %>% select(date, Spreads, Rates) %>% filter(Spreads %in% c("YS_10Yr_2Yr", "VIX")),
+      US_Spreads, 
+      UK_Spreads) %>%  
+    arrange(date)
+
+All_Spreads_Int_VIX_plot <- All_spreads %>% 
+    ggplot() +
+    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
+    facet_wrap(~Spreads, scales = "free_y") +
+    guides(alpha = "none") + 
+    labs(title = "International Yield Spreads with the VIX", x ="", subtitle = "RSA, UK and US Yield Spreads") +
+    fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(18), legend.size = ggpts(15)) + 
+    fmxdat::fmx_cols()
+
+```
+
+
+```{r}
+fmxdat::finplot(All_Spreads_Int_VIX_plot, x.date.type = "%Y%m", x.vert = TRUE)
+```
 
 
 # Conclusion
 
+Capital outflows into safer developed market bonds caused the demand for South African bonds to decrease, and therefore their yields to increase. The SARB adopted a mild form quantitative easing for the first time which kept the 3-month and 2-year yields low. However, the 10-year yield increased, and in turn its spread with bonds of shorter maturity. Thus I do agree with the initial hypothesis that the yield spreads are greater than historical norms.
 
-<!-- Make title of bibliography here: -->
-<!-- \newpage -->
-
-\newpage
-
-# References {-}
-
-<div id="refs"></div>
-
-
-# Appendix {-}
-
-## Appendix A {-}
-
-Some appendix information here
-
-## Appendix B {-}
 

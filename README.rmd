@@ -41,7 +41,7 @@ rm(list = ls()) # Clean your environment:
 gc() # garbage collection 
 
 pacman::p_load("xts", "tidyverse", "tbl2xts", "PerformanceAnalytics", "lubridate", "glue", "rmsfuns", "fmxdat", "tidyr", "devtools", "readr", "TTR",
-               "DEoptimR", "robustbase", "rportfolios", "RiskPortfolios", "fitHeavyTail", "quadprog", "cowplot")
+               "DEoptimR", "robustbase", "rportfolios", "RiskPortfolios", "fitHeavyTail", "quadprog", "cowplot", "FactoMineR", "factoextra", "ggdendro")
 list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 ```
 
@@ -78,6 +78,7 @@ The raw data files were placed in their respective question data folders
 We must load in the data from the data folder within the question folder. 
 
 ```{r}
+list.files('Question2/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
 loc2 <- "Questions/Question2/data/"
 
 SA_bonds <- read_rds(glue::glue("{loc2}SA_Bonds.rds"))
@@ -95,81 +96,20 @@ We will also clean the inflation data and exchange rate data.
 
 ```{r}
 pacman::p_load("tidyverse", "lubridate", "fmxdat")
-
-# Transforming the data into tidy format
-SA_bonds_clean <- SA_bonds %>%  
-    arrange(date) %>% 
-    gather(Ticker, Yield, -date)
-
-# Creating yield spread features 
-SA_Spreads <- SA_bonds %>% 
-    arrange(date) %>% 
-    group_by(date) %>% 
-    mutate(S_2Yr = ZA_2Yr-SA_3M, S_10Yr = ZA_10Yr-SA_3M) %>% 
-    ungroup() %>% 
-    pivot_longer(c("S_2Yr", "S_10Yr"), names_to = "Spreads", values_to = "Rates") 
-
-# SA Bonds correct format to left_join with Inflation
-# Keeping the data wide
-SA_bonds_inf <- SA_bonds %>% 
-    arrange(date) %>% 
-    group_by(date) %>% 
-    mutate(S_2Yr = ZA_2Yr-SA_3M, S_10Yr = ZA_10Yr-SA_3M) %>% 
-    filter(date >= lubridate::ymd(20200101)) %>% 
-    mutate(YM = format(date, "%Y_%B")) %>% 
-    group_by(YM) %>% 
-    filter(date == last(date)) %>% 
-    ungroup()
-
-# Cleaning Break-even Inflation into monthly values
-BE_Infl_clean <- BE_Infl %>% 
-    select(-Name) %>%  
-    arrange(date) %>% 
-    rename(BE_Infl = Price) %>% 
-    filter(date >= lubridate::ymd(20200101)) %>% 
-    mutate(YM = format(date, "%Y_%B")) %>% 
-    group_by(YM) %>% 
-    filter(date == last(date)) %>% 
-    select(-date)
-
-# Cleaning RSA Inflation into monthly values
-ZA_Infl_clean <- ZA_Infl %>% 
-        arrange(date) %>% 
-        filter(date >= lubridate::ymd(20200101)) %>% 
-        rename(Inflation = Price) %>% 
-        select(-Name) %>% 
-        mutate(YM = format(date, "%Y_%B")) %>% 
-        select(-date)
-
-# Left_join Bonds spreads, Break even inflation and ZA inflation and then put make long
-SA_spreads_inf <- left_join(SA_bonds_inf, left_join(BE_Infl_clean, ZA_Infl_clean, by = "YM"), by = "YM") %>% 
-    select(-YM) %>% 
-    pivot_longer(c("S_2Yr", "S_10Yr", "BE_Infl", "Inflation"), names_to = "Spreads", values_to = "Rates")
-
-# Cleaning USD-ZAR 
-usdzar_clean <- usdzar %>% 
-    arrange(date) %>% 
-    filter(date >= lubridate::ymd(20200101)) %>% 
-    rename(EX = Price) %>% 
-    select(-Name)
-
-# Left_join daily bond yields and the USD-ZAR exchange rate
-
-usd_zar_since2020 <- left_join(SA_bonds %>% 
-    arrange(date) %>% 
-    group_by(date) %>% 
-    mutate(S_2Yr = ZA_2Yr-SA_3M, S_10Yr = ZA_10Yr-SA_3M) %>% 
-    filter(date >= lubridate::ymd(20200101)), usdzar_clean, by = "date") %>% 
-    pivot_longer(c("S_2Yr", "S_10Yr", "EX"), names_to = "Spreads", values_to = "Rates")
-
 ```
 
 
-
-
-## First graph
+## Historical Bond Yields
 
 This will look at bond returns historically and how they have moved. This will then be filtered to look at bond yields since 2020 and assess their movements. 
+
+```{r}
+# Transforming the Bonds data into tidy format for plotting
+SA_bonds_clean <- SA_bonds %>%  
+    arrange(date) %>% 
+    gather(Ticker, Yield, -date)
+```
+
 
 ```{r}
 SA_Bond_All <- SA_bonds_clean %>% 
@@ -191,15 +131,30 @@ fmxdat::finplot(SA_Bond_All, x.vert = T, x.date.type = "%Y", x.date.dist = "2 ye
 
 This graph shows that over the last 20+ years bond yields have actually decreased relatively. With the largest decline that of the shortest maturity bond, the 3-month bond. What we can see in this graph is that the bond yields before 2020 were moving with one another. Since 2020 you can see a divergence of the Bond Yields, taking us to our next analysis: Yield Spreads. 
 
-## Second graph 
+## Historical Bond Yield Spreads
 
 Bond spreads across the same 20+ year range.
+
+Below we create the bond spread features  and make the data long.
+
+```{r}
+SA_Spreads <- SA_bonds %>% 
+    arrange(date) %>% 
+    group_by(date) %>% 
+    mutate(YS_2Yr_3M = ZA_2Yr-SA_3M, 
+           YS_10Yr_3M = ZA_10Yr-SA_3M, 
+           YS_10Yr_2Yr = ZA_10Yr-ZA_2Yr) %>% 
+    ungroup() %>% 
+    pivot_longer(c("YS_2Yr_3M", "YS_10Yr_3M", "YS_10Yr_2Yr"), names_to = "Spreads", values_to = "Rates") 
+```
+
+These spreads are then graphed using fmxdat's finplot. 
 
 ```{r}
 bond_spreads <- SA_Spreads %>% 
     ggplot() +
     geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
-    labs(title = "Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="") +
+    labs(title = "Short,Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="") +
     fmxdat::theme_fmx() + 
     fmxdat::fmx_cols()
 
@@ -208,14 +163,14 @@ fmxdat::finplot(bond_spreads, x.date.type = "%Y", x.vert = TRUE, x.date.dist = "
 This plot confirms that the spreads do face a significant spike in 2020, this can be seen especially for the spread of the long-term (10 year) bond yield.
 Now we look further into the data from 2020 until now. 
 
-## Third graph 
+## Looking closer at 2020
 
 ```{r}
 bond_spreads_since2020 <- SA_Spreads %>% 
     filter(date >= as.Date("2020/01/01")) %>% 
     ggplot() +
     geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
-    labs(title = "Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="") +
+    labs(title = "Short, Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="") +
     fmxdat::theme_fmx() + 
     fmxdat::fmx_cols()
 
@@ -223,55 +178,154 @@ fmxdat::finplot(bond_spreads_since2020, x.date.type = "%Y%m", x.vert = TRUE )
 ```
 
 
-## Fourth Graph 
+## 10-year Break-even inflation estimate vs SA Inflation
 
-Below we graph Break-even inflation, inflation and mid-term and long-term bond yields.
+Here we join the Break-even inflation with the monthly inflation in South Africa, find the first date that there is information on all the data and then plot the data.
 
 ```{r}
-SA_spreads_inf_since2020 <- SA_spreads_inf %>% 
+# First find the first available data range
+BE_inflation_start <- BE_Infl %>% pull(date) %>% first
+
+BE_Inflation <- rbind(ZA_Infl, 
+                      BE_Infl) %>% 
+    arrange(date) %>% 
+    filter(date >= BE_inflation_start)
+
+```
+
+```{r}
+BE_Inflation_plot <- BE_Inflation %>% 
     ggplot() +
-    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
-    labs(title = "Mid and Long Term SA Spreads", 
-         y = "Spreads (Yields)", 
+    geom_line(aes(date, Price, colour = Name), alpha = 0.8) +
+    labs(title = "Break-even 10 year Inflation and SA Inflation", 
+         y = "Percent", 
          x ="", 
-         subtitle = "Including Inflation and Break-Even 10 Year Yield (End of Month)") +
+         subtitle = "") +
     fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(20)) + 
     fmxdat::fmx_cols()
 
-fmxdat::finplot(SA_spreads_inf_since2020, x.date.type = "%Y%m", x.vert = TRUE)
+fmxdat::finplot(BE_Inflation_plot, x.date.type = "%Y%m", x.vert = TRUE)
 ```
 
-What we witness is that Break-even Inflation and the long-term bond spread tracks very closely since 2020. We see inflation rising since 2021 and the 2 year yield spread remains somewhat stationary while inflation increases. 
-
-# Can look at this across the entirre dataframe except in % Changes
-
-## Fifth Graph - Exchange rate and bonds 
+## USD-ZAR Exchange rate and Bond yields
 
 The below graph shows how the USD-ZAR exchange rate and the medium and long-term bond yields moved in sync at the beginning of 2020. The exchange rate lowered from its peak in 2020 while the long-term bond yields remained at their high level. 
 
 ```{r}
+# Left_join daily bond yields and the USD-ZAR exchange rate
+YS_usd_zar <- left_join(SA_bonds %>% 
+    arrange(date) %>% 
+    group_by(date) %>% 
+    mutate(YS_2Yr_3M = ZA_2Yr-SA_3M, 
+           YS_10Yr_3M = ZA_10Yr-SA_3M, 
+           YS_10Yr_2Yr = ZA_10Yr-ZA_2Yr), 
+    usdzar %>% 
+        arrange(date) %>% 
+        rename(EX = Price) %>% 
+        select(-Name), 
+    by = "date") %>% 
+    pivot_longer(c("YS_2Yr_3M", "YS_10Yr_3M", "YS_10Yr_2Yr", "EX"), names_to = "Spreads", values_to = "Rates") %>% 
+    select(date, Spreads, Rates)
+```
 
-usd_zar_plot <- usd_zar_since2020 %>% 
+Below is the Historical plot of Bond spreads and the USD-ZAR exchange rate. What is noticeable is that before 2010 the yield spreads move in opposite direction to the exchange rate. This change after 2010 as we witness the exchange rate climb steadily and in 2020 the exchange rate and yield spreads move together.
+
+```{r}
+YS_usd_zar_plot <- YS_usd_zar %>% 
     ggplot() +
     geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
-    labs(title = "Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="", subtitle = "Including USD/ZAR Exchange Rate") +
+    facet_wrap(~Spreads, scales = "free_y") +
+    guides(alpha = "none") + 
+    labs(title = "Short, Mid and Long Term SA Spreads", y = "Spreads (Yields)", x ="", subtitle = "Including USD/ZAR Exchange Rate") +
     fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(20)) + 
     fmxdat::fmx_cols()
 
-fmxdat::finplot(usd_zar_plot, x.date.type = "%Y%m", x.vert = TRUE)
+fmxdat::finplot(YS_usd_zar_plot, x.date.type = "%Y%m", x.vert = TRUE)
 ```
 
-## Graph 6
+## Volatility Indices and SA Yield Spread Graph
 
-Compare ZAR yields to other countries 
+```{r}
+# Compare SA Spreads to VIX
 
-## Graph 7
+SA_Spreads_Int_VIX <- rbind(SA_Spreads %>% select(date, Spreads, Rates),
+                            IV %>% rename(Spreads = Name, Rates = Price)) %>% 
+    arrange(date) %>% filter(date >= as.Date("2020/01/01"))
+```
 
-Do a correlation through time of the exchange rate on yield spreads. 
-
-## Graph 8
 
 Volatility Index Graph
+
+```{r}
+# PLot Spreads and Indices on Seperate Axis
+
+SA_Spreads_Int_VIX_plot <- SA_Spreads_Int_VIX %>% 
+    ggplot() +
+    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
+    facet_wrap(~Spreads, scales = "free_y") +
+    guides(alpha = "none") + 
+    labs(title = "Volatility Indices and SA Yield Spreads", x ="", subtitle = "Including VIX, V2X and VXEEM Volatility Indices") +
+    fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(18), legend.size = ggpts(15)) + 
+    fmxdat::fmx_cols()
+
+fmxdat::finplot(SA_Spreads_Int_VIX_plot, x.date.type = "%Y%m", x.vert = TRUE)
+```
+
+We can see that the spike in the VIX caused a shift in all the yield spreads. To further put htis into context we will graph the 10-year - 2-year yield spread of RSA and international countries in order to see the links between yield spreads and the VIX.
+
+## Foreign Yields and VIX
+
+```{r}
+US_Spreads <- cbind(bonds_2y %>% 
+                        filter(Name %in% "US_2yr") %>% 
+                        filter(date >= as.Date("2020/01/01")), 
+                    bonds_10y %>% 
+                        filter(Name %in% "US_10Yr") %>% 
+                        arrange(date) %>% 
+                        filter(date >= as.Date("2020/01/01")) %>% 
+                        select(-date) %>% 
+                        rename(US10 = Name)) %>% 
+    arrange(date) %>% 
+    mutate(YS_10Yr_2Yr_US = Bond_10Yr - Bond_2Yr) %>% 
+    select(date, YS_10Yr_2Yr_US) %>% 
+    pivot_longer(YS_10Yr_2Yr_US, names_to = "Spreads", values_to = "Rates")
+
+UK_Spreads <- cbind(bonds_2y %>% 
+                        filter(Name %in% "UK_2yr") %>% 
+                        filter(date >= as.Date("2020/01/01")), 
+                    bonds_10y %>% 
+                        filter(Name %in% "UK_10Yr") %>% 
+                        arrange(date) %>% 
+                        filter(date >= as.Date("2020/01/01")) %>% 
+                        select(-date) %>% 
+                        rename(US10 = Name)) %>% 
+    arrange(date) %>% 
+    mutate(YS_10Yr_2Yr_UK = Bond_10Yr - Bond_2Yr) %>% 
+    select(date, YS_10Yr_2Yr_UK) %>% 
+    pivot_longer(YS_10Yr_2Yr_UK, names_to = "Spreads", values_to = "Rates")
+
+
+All_spreads <- rbind(SA_Spreads_Int_VIX %>% select(date, Spreads, Rates) %>% filter(Spreads %in% c("YS_10Yr_2Yr", "VIX")),
+      US_Spreads, 
+      UK_Spreads) %>%  
+    arrange(date)
+
+```
+
+Graph All spreads with the VIX
+
+```{r}
+All_Spreads_Int_VIX_plot <- All_spreads %>% 
+    ggplot() +
+    geom_line(aes(date, Rates, colour = Spreads), alpha = 0.8) +
+    facet_wrap(~Spreads, scales = "free_y") +
+    guides(alpha = "none") + 
+    labs(title = "International Yield Spreads with the VIX", x ="", subtitle = "RSA, UK and US Yield Spreads") +
+    fmxdat::theme_fmx(title.size = ggpts(25), subtitle.size = ggpts(18), legend.size = ggpts(15)) + 
+    fmxdat::fmx_cols()
+
+fmxdat::finplot(All_Spreads_Int_VIX_plot, x.date.type = "%Y%m", x.vert = TRUE)
+```
 
 
 # Question 3 
@@ -281,6 +335,8 @@ Volatility Index Graph
 First we have to load in the data
 
 ```{r}
+list.files('Question/Question3/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
+
 loc3 <- "Questions/Question3/data/"
 
 usdzar <- read_rds(glue::glue("{loc2}usdzar.rds"))
@@ -288,165 +344,125 @@ T40 <- read_rds(glue::glue("{loc3}T40.rds"))
 RebDays <- read_rds(glue::glue("{loc3}Rebalance_days.rds"))
 ```
 
+## What have we done
 
-What do we want to do?
+To get the portfolio returns I use the Safe_Return.portfolio function for each portfolio based on their separate weightings.I make this into a function in order granulate the ALSI and SWIX into different sector and index, which can be made into a list of objects that this function can be mapped over. The first part of the function is to make sure the weights of each granulation sums to 1. This is done by normalising the vectors of weights with their own summation.
 
-ALSI(J200) and the SWIX(J400) to write a report to find differences in the return profiles.
+For the returns we impute the NA values from the impute_missing_returns function. First we will us this function with no granulation to see the cumulative returns across all sectors and indices.
 
-We must first look at different: 
-* sized indexes
-* sector exposures
-* stock concentration
-over time. 
-
-Can use stratification of usdzar in order to look into return profiles in different periods of currency volatility. 
-
-## Firstly a Sector and Index analysis
-
-Compare the performances of the different sectors for the ALSI and SWIX. 
-Both the ALSI and SWIX indices track each other closely. Clearly industrials were the best performing sector having grow by 1400\%. 
-Recently resources has begun to outperform financials.
-
-## What do we have
-T40 has the Tickers, Return for the Tickers per day, Sector, Index_Name, and the weights for both ALSI and SWIX
-RebDays has the dates of rebalance Effective Date and Trade Day
-
-## What we need:
-Portfolio return per sector and per Index_Name. 
-
-For Portfolio Returns we are going to use Safe_Return.portfolio function from PerformanceAnalytics and for that we need the data wide and in xts format
+Both of these functions can be found withing this questions code folder.
 
 ```{r}
-# # First we get the weights of the ALSI and SWIX into xts format
-# j200_weights <- T40 %>% select(date, Tickers, J200) %>% spread(Tickers, J200) %>% tbl_xts()
-# j400_weights <- T40 %>% select(date, Tickers, J400) %>% spread(Tickers, J400) %>% tbl_xts()
-# 
-# # Then we get the returns for all the Tickers into xts format
-# T40_returns <- T40 %>% select(date, Tickers, Return) %>% spread(Tickers, Return) %>% tbl_xts()
-# 
-# # Forcing the NA values to 0
-# j200_weights[is.na(j200_weights)] <- 0
-# j400_weights[is.na(j400_weights)] <- 0
-# T40_returns[is.na(T40_returns)] <- 0
+portfolio_cum_return <- portfolio_return_function(T40) %>% group_by(Portfolio) %>% 
+    mutate(cumreturn_Rand = (cumprod(1 + Returns))) %>% 
+    mutate(cumreturn_Rand = cumreturn_Rand/first(cumreturn_Rand))
+
+portfolio_cum_return_plot <- portfolio_cum_return %>% 
+    ggplot() +
+    geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + 
+    fmxdat::fmx_cols() + 
+    labs(title = "Cumulative Returns for ALSI and SWIX", y = "Cumulative Returns", x = "") + 
+    fmxdat::theme_fmx(title.size = ggpts(25))
+
+finplot(portfolio_cum_return_plot)
 ```
 
-Now we use the Safe_Return.portfolio function to get portfolio returns for each portfolio based on their seperate weightings
+I want to plot the different weights per sector through time. For this I need the values below from the function above. Unfortunately I short-cutted this in order to save time instead of being able to extract it from the function itself. 
+
+```{r include=FALSE}
+# First we get the weights of the ALSI and SWIX into xts format
+j200_weights <- T40 %>% select(date, Tickers, J200) %>% spread(Tickers, J200) %>% tbl_xts()
+j400_weights <- T40 %>% select(date, Tickers, J400) %>% spread(Tickers, J400) %>% tbl_xts()
+
+# Then we get the returns for all the Tickers into xts format
+stock_returns <- T40 %>% select(date, Tickers, Return) %>% spread(Tickers, Return) 
+
+# Forcing the NA values to 0
+# We can do this as NA weights are just 0
+j200_weights[is.na(j200_weights)] <- 0
+j400_weights[is.na(j400_weights)] <- 0
+
+# For NA's in returns it is safer to impute values for the NA's
+stock_returns <- impute_missing_returns(stock_returns, impute_returns_method = "Drawn_Distribution_Collective")
+stock_returns <- stock_returns %>% tbl_xts()
+
+
+J200_RetPort <- rmsfuns::Safe_Return.portfolio(stock_returns, 
+                                               weights = j200_weights, lag_weights = TRUE,
+                                               verbose = TRUE, contribution = TRUE, 
+                                               value = 1, geometric = TRUE) 
+
+J400_RetPort <- rmsfuns::Safe_Return.portfolio(stock_returns, 
+                                             weights = j400_weights, 
+                                             lag_weights = TRUE,
+                                             verbose = TRUE, contribution = TRUE, 
+                                             value = 1, geometric = TRUE) 
+
+# Need to clean and save the data
+
+# Clean and save portfolio returns and weights:
+J200_Contribution <- J200_RetPort$"contribution" %>% xts_tbl() 
+
+J200_BPWeight <- J200_RetPort$"BOP.Weight" %>% xts_tbl() 
+    
+J200_BPValue <- J200_RetPort$"BOP.Value" %>% xts_tbl()
+    
+# Clean and save portfolio returns and weights:
+J400_Contribution <- J400_RetPort$"contribution" %>% xts_tbl() 
+    
+J400_BPWeight <- J400_RetPort$"BOP.Weight" %>% xts_tbl()
+    
+J400_BPValue <- J400_RetPort$"BOP.Value" %>% xts_tbl() 
+
+names(J200_Contribution) <- c("date", names(J200_RetPort$"contribution"))
+names(J200_BPWeight) <- c("date", names(J200_RetPort$"BOP.Weight"))
+names(J200_BPValue) <- c("date", names(J200_RetPort$"BOP.Value"))
+names(J400_Contribution) <- c("date", names(J400_RetPort$"contribution"))
+names(J400_BPWeight) <- c("date", names(J400_RetPort$"BOP.Weight"))
+names(J400_BPValue) <- c("date", names(J400_RetPort$"BOP.Value"))
+```
+
+I got the weight vectors and subset the dataframes by the tickers that are a part of each category. I then summed across these Tickers to get their total weight per row. This allowed me to plot the different weights rolling through time. 
+
 ```{r}
+resources_tickers <- T40 %>% filter(Sector %in% "Resources") %>% pull(Tickers) %>% unique
+industrials_tickers <- T40 %>% filter(Sector %in% "Industrials") %>% pull(Tickers) %>% unique
+financials_tickers <- T40 %>% filter(Sector %in% "Financials") %>% pull(Tickers) %>% unique
 
-portfolio_return_function <- function(data = data, sector = "", index = ""){
-    stocks <- data
-    
-    if(!sector == ""){
-        stocks <- data %>% filter(Sector %in% sector) %>% 
-            group_by(date) %>% 
-            mutate(J400 = J400/sum(J400, na.rm = TRUE), J200 = J200/sum(J200, na.rm = TRUE)) %>% 
-            ungroup()
-    } 
-    if(!index == ""){
-        stocks <- data %>% filter(Index_Name %in% index) %>% 
-            group_by(date) %>% 
-            mutate(J400 = J400/sum(J400, na.rm = TRUE), J200 = J200/sum(J200, na.rm = TRUE)) %>% 
-            ungroup()
-    } 
-    if(!sector == "" & !index == ""){
-        stocks <- data %>%
-            group_by(date) %>% 
-            mutate(J400 = J400/sum(J400, na.rm = TRUE), J200 = J200/sum(J200, na.rm = TRUE)) %>% 
-            ungroup()
-    }
-    
-    # First we get the weights of the ALSI and SWIX into xts format
-    j200_weights <- stocks %>% select(date, Tickers, J200) %>% spread(Tickers, J200) %>% tbl_xts()
-    j400_weights <- stocks %>% select(date, Tickers, J400) %>% spread(Tickers, J400) %>% tbl_xts()
-    
-    # Then we get the returns for all the Tickers into xts format
-    stock_returns <- stocks %>% select(date, Tickers, Return) %>% spread(Tickers, Return) %>% tbl_xts()
-    
-    # Forcing the NA values to 0
-    j200_weights[is.na(j200_weights)] <- 0
-    j400_weights[is.na(j400_weights)] <- 0
-    stock_returns[is.na(stock_returns)] <- 0
-    
-    
-    J200_RetPort <- rmsfuns::Safe_Return.portfolio(stock_returns, 
-                                                   weights = j200_weights, lag_weights = TRUE,
-                                                   verbose = TRUE, contribution = TRUE, 
-                                                   value = 1, geometric = TRUE) 
-    
-    J400_RetPort <- rmsfuns::Safe_Return.portfolio(stock_returns, 
-                                                 weights = j400_weights, 
-                                                 lag_weights = TRUE,
-                                                 verbose = TRUE, contribution = TRUE, 
-                                                 value = 1, geometric = TRUE) 
-    
-    # Need to clean and save the data
-    
-    # Clean and save portfolio returns and weights:
-    J200_Contribution <- J200_RetPort$"contribution" %>% xts_tbl() #%>% mutate(date = lag(date), date = coalesce(date, index(j200_weights)[1]) )
-    
-    J200_BPWeight <- J200_RetPort$"BOP.Weight" %>% xts_tbl() #%>%
-        #mutate(date = lag(date), date = coalesce(date, index(j200_weights)[1]) )
-        
-    J200_BPValue <- J200_RetPort$"BOP.Value" %>% xts_tbl()# %>% 
-        #mutate(date = lag(date), date = coalesce(date, index(j200_weights)[1]) )
-        
-    # Clean and save portfolio returns and weights:
-    J400_Contribution <- J400_RetPort$"contribution" %>% xts_tbl() #%>%
-        #mutate(date = lag(date), date = coalesce(date, index(j400_weights)[1]) )
-        
-    J400_BPWeight <- J400_RetPort$"BOP.Weight" %>% xts_tbl()# %>%
-        #mutate(date = lag(date), date = coalesce(date, index(j400_weights)[1]) )
-        
-    J400_BPValue <- J400_RetPort$"BOP.Value" %>% xts_tbl() #%>% 
-        #mutate(date = lag(date), date = coalesce(date, index(j400_weights)[1]) )
-    
-    names(J200_Contribution) <- c("date", names(J200_RetPort$"contribution"))
-    names(J200_BPWeight) <- c("date", names(J200_RetPort$"BOP.Weight"))
-    names(J200_BPValue) <- c("date", names(J200_RetPort$"BOP.Value"))
-    names(J400_Contribution) <- c("date", names(J400_RetPort$"contribution"))
-    names(J400_BPWeight) <- c("date", names(J400_RetPort$"BOP.Weight"))
-    names(J400_BPValue) <- c("date", names(J400_RetPort$"BOP.Value"))
+J400_BPWeight$resource_weight <- rowSums(J400_BPWeight[, resources_tickers])
+J400_BPWeight$industrial_weight <- rowSums(J400_BPWeight[, industrials_tickers])
+J400_BPWeight$financial_weight <- rowSums(J400_BPWeight[, financials_tickers])
 
-    
-    # Let's bind all of these together now:
-    df_port_return_J200 <- 
-        left_join(stocks %>% select(date, Tickers, Return), 
-                  J200_BPWeight %>% gather(Tickers, weight, -date), 
-                  by = c("date", "Tickers") ) %>% 
-        left_join(., J200_BPValue %>% gather(Tickers, value_held, -date), 
-                  by = c("date", "Tickers") ) %>% 
-        left_join(., J200_Contribution %>% gather(Tickers, Contribution, -date), 
-                  by = c("date", "Tickers"))
-    
-    df_port_return_J400 <- 
-        left_join(stocks %>% select(date, Tickers, Return),
-                  J400_BPWeight %>% gather(Tickers, weight, -date),
-                  by = c("date", "Tickers") ) %>%
-        left_join(., J400_BPValue %>% gather(Tickers, value_held, -date),
-                  by = c("date", "Tickers") ) %>%
-        left_join(., J400_Contribution %>% gather(Tickers, Contribution, -date),
-                  by = c("date", "Tickers"))
-    
-    # Calculate Portfolio Returns:
-    df_Portf_J200 <- df_port_return_J200 %>% 
-        group_by(date) %>% 
-        summarise(PortfolioReturn = sum(Return*weight, na.rm = TRUE)) %>% 
-        filter(PortfolioReturn != 0)
-    
-    # Calculate Portfolio Returns:
-    df_Portf_J400 <- df_port_return_J400 %>% 
-        group_by(date) %>% 
-        summarise(PortfolioReturn = sum(Return*weight, na.rm = TRUE)) %>% 
-        filter(PortfolioReturn != 0)
-        
-    output <- left_join(df_Portf_J200 %>% rename(J200 = PortfolioReturn), 
-                     df_Portf_J400 %>%  rename(J400 = PortfolioReturn), 
-                     by = "date") %>% 
-        pivot_longer(c("J200", "J400"), names_to = "Portfolio", values_to = "Returns")
-    output
-}
-
+J200_BPWeight$resource_weight <- rowSums(J200_BPWeight[, resources_tickers])
+J200_BPWeight$industrial_weight <- rowSums(J200_BPWeight[, industrials_tickers])
+J200_BPWeight$financial_weight <- rowSums(J200_BPWeight[, financials_tickers])
 ```
+
+
+An interesting look into the portfolios is to see which industries are weighted highest between the SWIX and ALSI. Below is a plot of their different factor weights through time. We can see that since 2020 the ALSI lowered their weighting of Financial stocks and increased their weighting of resource stocks in comparison to the SWIX. 
+
+* ALSI (J200)
+
+```{r}
+J200_BPWeight %>% 
+  select(date, resource_weight, industrial_weight, financial_weight) %>% 
+  tbl_xts() %>% 
+  .[endpoints(.,'months')] %>% 
+  chart.StackedBar() 
+  
+```
+
+* SWIX (J400)
+
+```{r}
+J400_BPWeight %>% 
+  select(date, resource_weight, industrial_weight, financial_weight) %>% 
+  tbl_xts() %>% 
+  .[endpoints(.,'months')] %>% 
+  chart.StackedBar() 
+```
+
+Now we can use this function across a list of the different sectors and plot the results.
 
 ```{r}
 # Compare Sectors for ALSI and SWIX
@@ -462,25 +478,28 @@ for(i in 1:length(sectors)){
         mutate(Sector = sectors[i])
 }
 
+
+
 # Rename tibbles
 names(sector_return) <- sectors
 sector_return
 
 # Combine Dataframes
-sectors_cum_ret <- rbind(sector_return[[1]], sector_return[[2]], sector_return[[3]]) %>% arrange(date)
+sectors_cum_return <- rbind(sector_return[[1]], sector_return[[2]], sector_return[[3]]) %>% arrange(date)
     
-q2_p1 <- sectors_cum_ret %>% 
+sectors_cum_return_plot <- sectors_cum_return %>% 
     ggplot() +
     geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + facet_wrap(~Sector) + fmxdat::fmx_cols() + 
     labs(title = "Cumulative Returns per Sector for ALSI and SWIX", y = "Cumulative Returns", x = "") + 
     fmxdat::theme_fmx(title.size = ggpts(25))
 
-finplot(q2_p1)
+finplot(sectors_cum_return_plot)
 ```
+
+We can also run this funciton across the different indices and plot the results. 
 
 ```{r}
 # Compare indices for ALSI and SWIX
-
 indices <- T40 %>%  pull(Index_Name) %>% na.omit(.) %>%  unique()
 indices_return <- list()
 
@@ -496,26 +515,20 @@ mutate(cumreturn_Rand = cumreturn_Rand/first(cumreturn_Rand)) %>%
 names(indices_return) <- indices
 
 # Combine Dataframes
-indices_return_cum <- rbind(indices_return[[1]], indices_return[[2]], indices_return[[3]]) %>% arrange(date)
+indices_cum_return <- rbind(indices_return[[1]], indices_return[[2]], indices_return[[3]]) %>% arrange(date)
     
-q2_p2 <- indices_return_cum %>% 
+indices_cum_return_plot <- indices_cum_return %>% 
         ggplot() +
         geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + facet_wrap(~Index) + fmxdat::fmx_cols() + 
         labs(title = "Cumulative Returns per Index for ALSI and SWIX", y = "Cumulative Returns", x = "") +
         fmxdat::theme_fmx(title.size = ggpts(25))
 
-finplot(q2_p2)
+finplot(indices_cum_return_plot)
 ```
 
-
-We need to create a function that can filter the dataframe into sector and Index_Name and then calculate portfolio returns on the subsets. 
-
-Problems to face: the weights will not sum to 1 so we must normalise the weights in the subset. This will also cause more 0's and NA values, which can be pushed to 0. 
-
-So each weight per day must be normalised to the sum of weights for that subset. 
-
-
 ## Stratify the returns by high and low volatility
+
+First we find the bounds of our lower and higher quantiles at 20\%
 
 ```{r}
 zar <-  usdzar  %>% 
@@ -534,9 +547,12 @@ ZARSD <- zar %>%
 Hi_Vol <- ZARSD %>% filter(SD > TopQtile) %>% pull(YearMonth)
 
 Low_Vol <- ZARSD %>% filter(SD < BotQtile) %>% pull(YearMonth)
+```
 
+Here we create a function to compare performances suring times of low or high volatility
+
+```{r}
 # Create generic function to compare performance:
-
 Perf_comparisons <- function(Idxs, YMs, Alias){
   # For stepping through uncomment:
   # YMs <- Hi_Vol
@@ -551,7 +567,12 @@ Perf_comparisons <- function(Idxs, YMs, Alias){
   
   Unconditional_SD
 }
+```
 
+We have to get our portfolio returns, winsorize the returns to make sure there are no large outliers and then we compare. We then create a table for both volatility of the ALSI and SWIX during periods of both low and high exchange rate volatility.
+
+```{r}
+# Get portfolio returns
 ALSI_SWIX <- portfolio_return_function(T40)
 
 # Prepare and Winzorise Returns
@@ -567,17 +588,23 @@ perf_hi <- Perf_comparisons(ALSI_SWIX, YMs = Hi_Vol, Alias = "High_Vol")
 
 perf_lo <- Perf_comparisons(ALSI_SWIX, YMs = Low_Vol, Alias = "Low_Vol")
 
-# Print High Vol
-perf_hi
+# Creating tables in kable
+perf_hi_table <- perf_hi %>% kable() %>% add_header_above(c("High Volatility" = 5))
+perf_lo_table <- perf_lo %>% kable() %>% add_header_above(c("Low Volatility" = 5))
+
+perf_hi_table
 ```
 
+Printing the volatilities in the low volatility periods.
 
 ```{r}
-perf_lo
+perf_lo_table
 ```
 
 
 ## Construct a capped portfolio
+
+For the analysis of the capped portfolios we have to first find the effective rebalancing days and coalesce any NA's to zero
 
 ```{r}
 # first filter out the Effective rebalance days 
@@ -587,207 +614,1209 @@ rebalance_ALSI <- T40 %>% filter(date %in% effective_rebDays$date) %>%
     mutate(RebalanceTime = format(date, "%Y%B")) %>% 
     select(date, Tickers, Return, J200, RebalanceTime) %>% 
     rename(weight = J200) %>% 
-    # There are 27 NA's in this so we coalesce them to 0
     mutate(weight = coalesce(weight , 0))
 
 # Checking if there are any NA's left
-sum(is.na(rebalance_ALSI$weight))
+any(is.na(rebalance_ALSI$weight))
 ```
 
-
+First we will cap the ALSI at 10\%. For this we need to get the weights and returns.
 
 ```{r}
-# Construct Capped Portfolio and Determine Performance for ALSI
-
-Proportional_Cap_Foo <- function(df_Cons, W_Cap = 0.08){
-  
-  # Let's require a specific form from the user... Alerting when it does not adhere this form
-  if( !"weight" %in% names(df_Cons)) stop("... for Calc capping to work, provide weight column called 'weight'")
-  
-  if( !"date" %in% names(df_Cons)) stop("... for Calc capping to work, provide date column called 'date'")
-  
-  if( !"Tickers" %in% names(df_Cons)) stop("... for Calc capping to work, provide id column called 'Tickers'")
-
-  # First identify the cap breachers...
-  Breachers <- df_Cons %>% filter(weight > W_Cap) %>% pull(Tickers)
-  
-  # Now keep track of breachers, and add to it to ensure they remain at 10%:
-  if(length(Breachers) > 0) {
-    
-    while( df_Cons %>% filter(weight > W_Cap) %>% nrow() > 0 ) {
-      df_Cons <- 
-          bind_rows(
-              df_Cons %>% filter(Tickers %in% Breachers) %>% mutate(weight = W_Cap),
-              df_Cons %>% filter(!Tickers %in% Breachers) %>% mutate(weight = (weight / sum(weight, na.rm=T)) * (1-length(Breachers)*W_Cap) )
-              )
-      
-      Breachers <- c(Breachers, df_Cons %>% filter(weight > W_Cap) %>% pull(Tickers))
-    }
-
-    if( sum(df_Cons$weight, na.rm=T) > 1.1 | sum(df_Cons$weight, na.rm=T) < 0.9 | max(df_Cons$weight, na.rm = T) > W_Cap) {
-    stop( glue::glue("For the Generic weight trimming function used: 
-    the weight trimming causes non unit summation of weights for date: {unique(df_Cons$date)}...
-    \nThe restriction could be too low or some dates have extreme concentrations...") )
-        }
-  } else {
-          
-      }
-  df_Cons
-}
-  
 # Apply Proportional_Cap_Foo to ALSI to get capped return for cap of 10%
-Capped_df <- rebalance_ALSI %>% 
-    group_split(RebalanceTime) %>% 
-    map_df(~Proportional_Cap_Foo(., W_Cap = 0.1) ) %>% 
-    select(-RebalanceTime)
+ALSI_capped_10 <- rebalance_ALSI %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.1) ) %>% 
+  select(-RebalanceTime)
  
-ALSI_wts <- Capped_df %>% 
-    tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+ALSI_wts_10 <- ALSI_capped_10 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
 
-ALSI_rts <- T40 %>% 
-    filter(Tickers %in% unique(Capped_df$Tickers)) %>% 
+ALSI_rts_10 <- T40 %>% 
+    filter(Tickers %in% unique(ALSI_capped_10$Tickers)) %>% 
     tbl_xts(cols_to_xts = Return, spread_by = Tickers)
 
-ALSI_wts[is.na(ALSI_wts)] <- 0
+# Make NA values into 0's
+ALSI_wts_10[is.na(ALSI_wts_10)] <- 0
 
-ALSI_rts[is.na(ALSI_rts)] <- 0
+ALSI_rts_10[is.na(ALSI_rts_10)] <- 0
 
-ALSI_capped <- rmsfuns::Safe_Return.portfolio(R = ALSI_rts, weights = ALSI_wts, lag_weights = T) %>% 
+ALSI_capped_10 <- rmsfuns::Safe_Return.portfolio(R = ALSI_rts_10, weights = ALSI_wts_10, lag_weights = T) %>% 
     xts_tbl() %>% 
-    rename(ALSI = portfolio.returns)
+    rename(ALSI_10 = portfolio.returns)
+```
 
-# Construct Capped Portfolio and Determine Performance for SWIX
+We repeat this for the ALSI but at a cap of 6\%.
 
-reb_SWIX <- T40 %>% 
-    filter(date %in% effective_rebDays$date) %>% 
-    mutate(RebalanceTime = format(date, "%Y%B")) %>% 
-    select(date, Tickers, Return, J400, RebalanceTime) %>% 
-    rename(weight = J400) %>% 
-    mutate(weight = coalesce(weight , 0))
-  
+```{r}
 # Apply Proportional_Cap_Foo to ALSI to get capped return for cap of 6%
-Capped_df <- 
-    reb_SWIX %>% 
-    group_split(RebalanceTime) %>% 
-    map_df(~Proportional_Cap_Foo(., W_Cap = 0.06) ) %>% 
-    select(-RebalanceTime)
+ALSI_capped_6 <- rebalance_ALSI %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.06) ) %>% 
+  select(-RebalanceTime)
  
-SWIX_wts <- Capped_df %>% tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+ALSI_wts_6 <- ALSI_capped_6 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
 
-SWIX_rts <- T40 %>% 
-    filter(Tickers %in% unique(Capped_df$Tickers)) %>% 
+ALSI_rts_6 <- T40 %>% 
+    filter(Tickers %in% unique(ALSI_capped_6$Tickers)) %>% 
     tbl_xts(cols_to_xts = Return, spread_by = Tickers)
 
-SWIX_wts[is.na(SWIX_wts)] <- 0
+# Make NA values into 0's
+ALSI_wts_6[is.na(ALSI_wts_6)] <- 0
 
-SWIX_rts[is.na(SWIX_rts)] <- 0
+ALSI_rts_6[is.na(ALSI_rts_6)] <- 0
 
-SWIX_capped <- rmsfuns::Safe_Return.portfolio(R = SWIX_rts, weights = SWIX_wts, lag_weights = T) %>% 
+ALSI_capped_6 <- rmsfuns::Safe_Return.portfolio(R = ALSI_rts_6, weights = ALSI_wts_6, lag_weights = T) %>% 
     xts_tbl() %>% 
-    rename(SWIX = portfolio.returns)
+    rename(ALSI_6 = portfolio.returns)
+```
 
+We plot the cumulative return for the ALSI with a 10\% cap and a 6\% cap on individual stocks. 
 
-# Combine and Plot Performance
+```{r}
+# Both ALSI Capped indexes
+capped_ALSI <- left_join(ALSI_capped_10, ALSI_capped_6, by = "date") %>% 
+  pivot_longer(c("ALSI_6", "ALSI_10"), names_to = "Portfolio", values_to = "returns")
 
-capped_indices <- left_join(ALSI_capped, SWIX_capped, by = "date") %>% 
-    pivot_longer(c("ALSI", "SWIX"), names_to = "Portfolio", values_to = "returns")
-
-# Calculate Uncapped Return for ALSI
-ALSI_wts <- T40 %>% 
-filter(date %in% effective_rebDays$date) %>% 
-mutate(RebalanceTime = format(date, "%Y%B")) %>% 
-    rename(weight = J200) %>% 
-    mutate(weight = coalesce(weight , 0)) %>% 
-    select(date, Tickers, Return, weight, RebalanceTime) %>% 
-     tbl_xts(cols_to_xts = weight, spread_by = Tickers)
-
-ALSI_wts[is.na(ALSI_wts)] <- 0
-
-ALSI_rts[is.na(ALSI_rts)] <- 0
-
-ALSI_capped <- rmsfuns::Safe_Return.portfolio(R = ALSI_rts, weights = ALSI_wts, lag_weights = T) %>% 
-    xts_tbl() %>% 
-    rename(ALSI = portfolio.returns)
-
-# Calculate Uncapped Return for SWIX
- 
-SWIX_wts <- T40 %>% 
-filter(date %in% effective_rebDays$date) %>% 
-mutate(RebalanceTime = format(date, "%Y%B")) %>% 
-    rename(weight = J400) %>% 
-    mutate(weight = coalesce(weight , 0)) %>% 
-    select(date, Tickers, Return, weight, RebalanceTime) %>% 
-     tbl_xts(cols_to_xts = weight, spread_by = Tickers)
-
-SWIX_wts[is.na(SWIX_wts)] <- 0
-
-SWIX_rts[is.na(SWIX_rts)] <- 0
-
-SWIX_capped <- rmsfuns::Safe_Return.portfolio(R = SWIX_rts, weights = SWIX_wts, 
-    lag_weights = T) %>% 
-xts_tbl() %>% 
-rename(SWIX = portfolio.returns)
-
-# Combine and Plot
-
-ALSI_SWIX <- left_join(ALSI_capped, SWIX_capped, by = "date") %>% 
-    pivot_longer(c("ALSI", "SWIX"), names_to = "Portfolio", values_to = "Returns")
-
-q2_p3 <- capped_indices %>% 
+capped_ALSI_plot <- capped_ALSI %>% 
     group_by(Portfolio) %>%
     mutate(Idx = cumprod(1 + returns)) %>% 
     ggplot() + 
     geom_line(aes(date, Idx, colour = Portfolio), alpha = 0.8) + 
-    labs(subtitle = "ALSI capped at 10% and SWIX at 6%", x = "", y = "Cumulative Return") + 
+    labs(subtitle = "ALSI capped at 10% and 6%", x = "", y = "Cumulative Return") + 
     fmx_cols() + 
     fmxdat::theme_fmx(subtitle.size = ggpts(20))
 
-q2_p4 <- ALSI_SWIX %>% 
-    group_by(Portfolio) %>%
-    mutate(Idx = cumprod(1 + Returns)) %>% 
-    ggplot() + 
-    geom_line(aes(date, Idx, colour = Portfolio), alpha = 0.8) + 
-    labs(subtitle = "Uncapped Index Calculation for ALSI and SWIX", x = "", y = "Cumulative Return") + 
-    fmx_cols() + 
-    fmxdat::theme_fmx(subtitle.size = ggpts(20))
-
-plot_grid(finplot(q2_p3), finplot(q2_p4), labels = list(title = "Comparing Capped and Uncapped returns of ALSI and SWIX"), label_size = ggpts(30), align = "h")
+finplot(capped_ALSI_plot)
 ```
 
+The analysis above is then repeated for the SWIX.
+
+```{r}
+# Apply Proportional_Cap_Foo to SWIX to get capped return for cap of 10%
+rebalance_SWIX <- T40 %>% filter(date %in% effective_rebDays$date) %>% 
+    mutate(RebalanceTime = format(date, "%Y%B")) %>% 
+    select(date, Tickers, Return, J400, RebalanceTime) %>% 
+    rename(weight = J400) %>% 
+    # There are 27 NA's in this so we coalesce them to 0
+    mutate(weight = coalesce(weight , 0))
+
+SWIX_capped_10 <- rebalance_SWIX %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.1) ) %>% 
+  select(-RebalanceTime)
+ 
+SWIX_wts_10 <- SWIX_capped_10 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+
+SWIX_rts_10 <- T40 %>% 
+    filter(Tickers %in% unique(SWIX_capped_10$Tickers)) %>% 
+    tbl_xts(cols_to_xts = Return, spread_by = Tickers)
+
+# Make NA values into 0's
+SWIX_wts_10[is.na(SWIX_wts_10)] <- 0
+
+SWIX_rts_10[is.na(SWIX_rts_10)] <- 0
+
+SWIX_capped_10 <- rmsfuns::Safe_Return.portfolio(R = SWIX_rts_10, weights = SWIX_wts_10, lag_weights = T) %>% 
+    xts_tbl() %>% 
+    rename(SWIX_10 = portfolio.returns)
+
+# Apply Proportional_Cap_Foo to SWIX to get capped return for cap of 6%
+SWIX_capped_6 <- rebalance_SWIX %>% 
+  group_split(RebalanceTime) %>% 
+  map_df(~Proportional_Cap_Foo(., W_Cap = 0.06) ) %>% 
+  select(-RebalanceTime)
+ 
+SWIX_wts_6 <- SWIX_capped_6 %>% 
+  tbl_xts(cols_to_xts = weight, spread_by = Tickers)
+
+SWIX_rts_6 <- T40 %>% 
+    filter(Tickers %in% unique(SWIX_capped_6$Tickers)) %>% 
+    tbl_xts(cols_to_xts = Return, spread_by = Tickers)
+
+# Make NA values into 0's
+SWIX_wts_6[is.na(SWIX_wts_6)] <- 0
+
+SWIX_rts_6[is.na(SWIX_rts_6)] <- 0
+
+SWIX_capped_6 <- rmsfuns::Safe_Return.portfolio(R = SWIX_rts_6, weights = SWIX_wts_6, lag_weights = T) %>% 
+    xts_tbl() %>% 
+    rename(SWIX_6 = portfolio.returns)
+
+# Both ALSI Capped indexes
+capped_SWIX <- left_join(SWIX_capped_10, SWIX_capped_6, by = "date") %>% 
+  pivot_longer(c("SWIX_6", "SWIX_10"), names_to = "Portfolio", values_to = "returns")
+
+capped_SWIX_plot <- capped_SWIX %>% 
+    group_by(Portfolio) %>%
+    mutate(Idx = cumprod(1 + returns)) %>% 
+    ggplot() + 
+    geom_line(aes(date, Idx, colour = Portfolio), alpha = 0.8) + 
+    labs(subtitle = "SWIX capped at 10% and 6%", x = "", y = "Cumulative Return") + 
+    fmx_cols() + 
+    fmxdat::theme_fmx(subtitle.size = ggpts(20))
+
+finplot(capped_SWIX_plot)
+```
+
+The function used to construct a capped portfolio and determine its performance is found within the code folder of this question.
 
 # Question 4 
 
-## What it is 
+## Volatility Comparison
+
+First we have to load in the data and do some data manipulations:
 
 ```{r}
-git rm -r --cached .;
-git add .;
-git commit -m "Untracked files issue resolved to fix .gitignore";
+# Load the data from Q3
+T40 <- read_rds(glue::glue("{loc3}T40.rds"))
+
+# Find the top 40 stocks from the last date 
+T40_tickers <- T40 %>% arrange(date) %>% 
+    filter(date == dplyr::last(date)) %>% 
+    arrange(desc(J200)) %>%  
+    top_n(40, J200) %>% 
+    pull(Tickers) %>% 
+    unique()
+
+# Clean up the names of the data 
+ALSI_T40 <- T40 %>% 
+    filter(Tickers %in% T40_tickers) %>% 
+    mutate(Tickers = gsub("SJ Equity", "", Tickers))
+```
+
+We first plot the returns over time to see if there are any outliers and how large they are. Below we can see there are some with large outliers but nothing too major so we will not limit the data. 
+
+```{r}
+ggplot(ALSI_T40) + geom_line(aes(x = date, y = Return, color = Tickers, alpha = 0.9)) + ggtitle("Equity Log Returns: SA") + guides(alpha = FALSE)
+```
+
+We need wide data to find the PCA's. There are NA values in the data so we use the impute_missing_returns function from Question 3. We impute values according to own distribution as if we impute across the whole dataframe it will bias the PCA analysis. 
+
+```{r}
+# Make data wide
+ALSI_T40_wide <- ALSI_T40 %>% select(date, Tickers, Return) %>% spread(Tickers, Return)
+
+# impute missing values
+ALSI_T40_wide <- impute_missing_returns(ALSI_T40_wide, impute_returns_method = "Drawn_Distribution_Own") %>% select(-date)
 ```
 
 
+## PCA
+
+The scree plot below is the best visual illustration of the contribution of the top 10 PCA factors to explaining the variation. The top PCA factor explains just over 20 percent of the variation with the top 5 explaining almost 50 percent of the variation.
+
+```{r}
+# Run PCA
+ALSI_T40_pca <- PCA(ALSI_T40_wide, graph = FALSE)
+
+fviz_screeplot(ALSI_T40_pca, ncp = 10)
+```
+
+The figure below shows how the individual stocks contribute to the first PCA factor. 
+
+```{r}
+fviz_contrib(ALSI_T40_pca, choice = "var", axes = 1) 
+```
+
+We do the same as above except for the second PCA.
+
+```{r}
+fviz_contrib(ALSI_T40_pca, choice = "var", axes = 2)
+```
+
+We now visualise the direction of the variables across the first and second PCA.
+
+```{r}
+fviz_pca_var(pca, col.var = "contrib", repel = T) + theme_minimal()
+```
+
+# Rolling correlation
+
+To calculate constituent correlations through time I calculate the correlation matrix of the top 40 constituents in the ALSI, which derived from a Ledoit-Wolf shrunk matrix. I then use the auxiliary functions loaded from Nico's gist. 
+
+```{r}
+# We use this due to heavy tails in the data
+Sigma <- fitHeavyTail::fit_mvt(ALSI_T40_wide) %>% .$cov
+
+corr <- cov2cor(Sigma)
+distmat <- ((1 - corr)/2)^0.5
+
+cluster <- cluster::agnes(dist(distmat), method = "ward")
+
+```
+
+Below we have complex comovement structures using a dendogram, colouring several groups that are of note.
+
+```{r}
+cluster_aux()
+
+hcdata <- dendro_data_k(cluster, 4)
+p <- plot_ggdendro(hcdata, direction = "lr", expand.y = 0.2)
+
+cols <- c("#a9a9a9", "#1f77b4", "#ff7f0e", "#2ca02c", "#AD3636")
+p <- plot_ggdendro(hcdata, direction = "tb", scale.color = cols, label.size = 2.5, branch.size = 0.5, expand.y = 0.2)
+p <- p + theme_void() + expand_limits(x = c(-1, 32))
+
+p + labs(title = "Dendogram of Top 40 ALSI stocks", caption = "Dendogram created using Ward distances and AGNES clustering")
+```
+
+
+## Stratify for periods of high volatility 
+
+```{r}
+# Determine Periods of high volatility
+
+ALSI_T40_vol <- ALSI_T40 %>% 
+  select(date, Tickers, Return) %>% 
+  arrange(date) %>% 
+  mutate(YearMonth = format(date, "%Y%B")) %>% 
+  group_by(YearMonth) %>% 
+  summarise(SD = sd(Return)*sqrt(52)) %>%
+  mutate(TopQtile = quantile(SD, 0.8))
+
+# There are 33 months of high volatility 
+Hi_Volatility <- ALSI_T40_vol %>% filter(SD > TopQtile) %>% pull(YearMonth)
+
+# Extract these months
+ALSI_T40_volatile <- ALSI_T40 %>% 
+  select(date, Tickers, Return) %>% 
+  mutate(YearMonth = format(date, "%Y%B")) %>% 
+  filter(YearMonth %in% Hi_Vol)
+```
+
+I have stratified the data for highly volatile periods and for these periods found the PCA's. Below it is evident that that the first PCA hasa  larger contribution that the PCA of the full data, reaching almost 25 percent. All of the graph sabove are reproduced for the volatile periods below.
+
+```{r}
+# Make data wide
+ALSI_T40_volatile_wide <- ALSI_T40_volatile %>% select(date, Tickers, Return) %>% spread(Tickers, Return)
+
+# impute missing values
+ALSI_T40_volatile_wide <- impute_missing_returns(ALSI_T40_volatile_wide, impute_returns_method = "Drawn_Distribution_Own") %>% select(-date)
+
+ALSI_T40_volatile_wide_pca <- PCA(ALSI_T40_volatile_wide, graph = FALSE)
+
+fviz_screeplot(ALSI_T40_volatile_wide_pca)
+```
+
+
+```{r}
+fviz_contrib(ALSI_T40_volatile_wide_pca, choice = "var", axes = 1) 
+```
+
+
+```{r}
+fviz_pca_var(ALSI_T40_volatile_wide_pca, col.var = "contrib", repel = T) + theme_minimal()
+```
+
+And then the correlation clustering for highly volatile periods:
+
+```{r}
+# We use this due to heavy tails in the data
+Sigma_vol <- fitHeavyTail::fit_mvt(ALSI_T40_volatile_wide) %>% .$cov
+
+corr_vol <- cov2cor(Sigma_vol)
+distmat_vol <- ((1 - corr_vol)/2)^0.5
+
+cluster_vol <- cluster::agnes(dist(distmat_vol), method = "ward")
+
+```
+
+Below we have complex comovement structures using a dendogram, colouring several groups that are of note.
+
+```{r}
+hcdata_vol <- dendro_data_k(cluster_vol, 4)
+p_vol <- plot_ggdendro(hcdata_vol, direction = "lr", expand.y = 0.2)
+
+cols <- c("#a9a9a9", "#1f77b4", "#ff7f0e", "#2ca02c", "#AD3636")
+p_vol <- plot_ggdendro(hcdata, direction = "tb", scale.color = cols, label.size = 2.5, branch.size = 0.5, expand.y = 0.2)
+p_vol <- p_vol + theme_void() + expand_limits(x = c(-1, 32))
+
+p_vol + labs(title = "Dendogram of Top 40 ALSI stocks during highly volatile periods", caption = "Dendogram created using Ward distances and AGNES clustering")
+```
 
 
 # Question 5 
 
-## What it is 
+## Volatility and GARCH estimates
+
+The South African rand (ZAR) has over the past few years been one of the most volatile currencies;
+
+The ZAR has generally performed well during periods where G10 currency carry trades have been favourable and these currency valuations relatively cheap. Globally, it has been one of the currencies that most benefit during periods where the Dollar is comparatively strong, indicating a risk-on sentiment.
 
 
+First we have to load in the data
+
+```{r}
+loc5 <- "Questions/Question5/data/"
+
+cncy <- read_rds(glue::glue("{loc5}currencies.rds"))
+cncy_Carry <- read_rds(glue::glue("{loc5}cncy_Carry.rds"))
+cncy_value <- read_rds(glue::glue("{loc5}cncy_value.rds"))
+cncyIV <- read_rds(glue::glue("{loc5}cncyIV.rds"))
+bbdxy <- read_rds(glue::glue("{loc5}bbdxy.rds"))
+
+```
 
 
+```{r}
+pacman::p_load(sugrrants, rugarch)
+```
+
+
+Test for conditional heteroskedasticity
+
+```{r}
+test_cond_het_func <- function(data = zar_ret){
+    
+    Plotdata <- data %>% 
+        mutate(Returns = dlogret, 
+               Returns_Sqd = dlogret^2, 
+               Returns_Abs = abs(dlogret))
+        
+        Plotdata <- Plotdata %>% 
+        pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns")
+        
+        ret_plot <- Plotdata %>% ggplot() + 
+        geom_line(aes(x = Date, y = Returns, colour = ReturnType), alpha = 0.8) + 
+            
+        ggtitle("Return Type Persistence") + 
+        facet_wrap(~ReturnType, nrow = 3, ncol = 1, scales = "free") + 
+            
+        guides(alpha = "none", colour = "none") + 
+        fmxdat::theme_fmx()
+        
+        acf_1 <- Plotdata %>% 
+        ggplot() + geom_acf(aes(x = ..lag.., y = dlogret)) + theme_bw() + labs(subtitle = "ACF of Dlog Ret", y = "")
+        acf_2 <- Plotdata %>% 
+        ggplot() + geom_acf(aes(x = ..lag.., y = dlogret^2)) + theme_bw() + labs(subtitle = "ACF of Sqaured Dlog Ret", y = "")
+        acf_3 <- Plotdata %>% 
+        ggplot() + geom_acf(aes(x = ..lag.., y = abs(dlogret))) + theme_bw() + labs(subtitle = "ACF of Absolute value of Dlog Ret", y = "")
+        
+        acf_plots <- plot_grid(acf_1, acf_2, acf_3, nrow = 1)
+        
+        box_stats <- Box.test(data$dlogret^2, type = "Ljung-Box", lag = 12)
+
+    out <- list(`Return Plots` = ret_plot,
+                `ACF Plots` = acf_plots,
+                `Box Statistics` = box_stats)
+    out
+    
+}
+```
+
+Fit GARCH function
+
+```{r}
+vol_func <- function(data = zar_ret, model = "sGARCH"){
+    
+    data <- data %>% select(Date, dlogret) %>%  tbl_xts()
+    
+    gjrgarch11 = ugarchspec(variance.model = list(model = model, 
+                                              
+                                              garchOrder = c(1, 1)), 
+                        
+                        mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+                        
+                        distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[3])
+# Now to fit, I use as.matrix and the data - this way the plot functions we will use later will work.
+garchfit2 = ugarchfit(spec = gjrgarch11, data = as.matrix(data)) 
+
+garchfit2
+}
+```
+
+Select Best Garch Model
+
+```{r}
+
+vol_select_func <- function(data = zar_ret){
+    data <- data %>% select(Date, dlogret) %>%  tbl_xts()
+    models = 1:4
+    model.list = list()
+    
+    for (p in models) { 
+        garchfit = ugarchspec(
+        variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","apARCH")[p], garchOrder = c(1, 1)), 
+
+        mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+
+        distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[1])
+
+        garchfit1 = ugarchfit(spec = garchfit,data=as.numeric(data)) 
+
+        model.list[[p]] = garchfit1
+        }
+    names(model.list) <- c("sGARCH","gjrGARCH","eGARCH","apARCH")
+
+    fit.mat = sapply(model.list, infocriteria)  
+    
+    # Note: sapply can apply a function (infocriteria here) to a list...
+    rownames(fit.mat) = rownames(infocriteria(model.list[[1]]))
+    fit.mat
+}
+```
+
+Plot Smoothed Ret^2
+
+```{r}
+vol_plot_func <- function(data = zar_ret, fit = garch_fit){
+    # To view the conditional variance plot, use:
+    sigma <- sigma(fit) %>% xts_tbl() 
+    colnames(sigma) <- c("date", "sigma") 
+    sigma <- sigma %>% mutate(Date = as.Date(date))
+
+    Plotdata <- data %>% 
+        mutate(Returns = dlogret, 
+               Returns_Sqd = dlogret^2, 
+               Returns_Abs = abs(dlogret)) %>% 
+        pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns")
+
+gg <- Plotdata %>% 
+    ggplot() + 
+    geom_line(data = Plotdata %>% 
+                  filter(ReturnType == "Returns_Sqd") %>% 
+                  select(Date, Returns) %>% 
+                  unique() %>% 
+                  mutate(Returns = sqrt(Returns)), 
+              aes(x = Date, y = Returns), alpha = 0.8) + 
+    geom_line(data = sigma, aes(x = Date, y = sigma), color = "red", size = 2, alpha = 0.8) + 
+    labs(title = "Comparison: Returns Sigma vs Sigma from Garch", x = "", y = "Comparison of estimated volatility") + 
+    fmxdat::theme_fmx(title = ggpts(25))
+    fmxdat::finplot(gg, y.pct = T, y.pct_acc = 1)
+
+}
+```
+
+Determine whether ZAR is more volatile
+
+```{r}
+zar_ret <- cncy %>% 
+    filter(date > as.Date("2009-12-31")) %>% 
+    filter(Name %in% "SouthAfrica_Cncy") %>% 
+    mutate(dlogret = log(Price) - lag(log(Price))) %>% 
+    filter(date > first(date)) %>% 
+    rename(Date = date)
+
+# Test for GARCH effects
+test_cond_het_func(zar_ret)
+```
+
+Find best model
+
+```{r}
+best_mod <- vol_select_func(zar_ret)
+best_mod
+```
+
+Fit Model
+
+```{r}
+garch_fit <- vol_func(zar_ret, "gjrGARCH")
+# Model Coefficients
+garch_fit@fit$matcoef
+```
+
+Plot Model
+
+```{r}
+vol_plot_func(data = zar_ret, fit = garch_fit)
+```
+
+Find highest vols
+
+```{r}
+max_vol <- cncy %>% filter(date > as.Date("2009-12-31")) %>% arrange(date) %>% 
+    group_by(Name) %>% 
+    mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > first(date)) %>% rename(Date = date) %>% mutate(vol = dlogret^2) %>% 
+    summarise(`Mean_Vol` = mean(vol)) %>% 
+    arrange(desc(Mean_Vol)) %>% top_n(10, Mean_Vol)
+```
+
+ZAR Vol and cncyIV
+
+```{r}
+# Compare Smoothed ZAR Vol to mean Global VOL
+
+# Calculate Mean Global VOL
+mean_vol <- cncyIV %>% filter(date > as.Date("2009-12-31")) %>% 
+    group_by(date) %>% 
+    summarise(mean_vol = mean(Price)) %>% 
+        mutate(Global_vol = mean_vol/max(mean_vol))
+
+# Wrangle Sigma into dataframe
+sigma <- sigma(garch_fit) %>% xts_tbl() 
+colnames(sigma) <- c("date", "sigma") 
+sigma <- sigma %>% mutate(Date = as.Date(date)) %>% 
+    mutate(ZAR_sigma = sigma/max(sigma))%>% left_join(., mean_vol, by = "date")
+
+# Plot prop of max volatility to be comparable
+q4_p2 <- sigma %>% select(-date) %>% 
+    pivot_longer(c("ZAR_sigma", "Global_vol"), names_to = "Vol_type", values_to = "VOL") %>% 
+    ggplot() +
+    geom_line(aes(Date, VOL, colour = Vol_type)) +
+    labs(title = "Comparison of ZAR Cleaned Volatility and Mean Currency Volatility", x = "", 
+         y = "Prop of Max Vol") +
+    fmx_cols() +
+    theme_fmx(title.size = ggpts(25)) 
+
+finplot(q4_p2)
+```
+
+ZAR Returns during high Carry Trade Returns
+
+```{r}
+# Stratify for high carry trade periods and check ZAR Returns
+zar_ret <- cncy %>% filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% filter(Name %in% "SouthAfrica_Cncy") %>% 
+    mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date)
+
+# Find high carry trade periods
+carry_dat <- cncy_Carry %>% filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date) 
+
+df_carry <- carry_dat %>% 
+  mutate(YearMonth = format(Date, "%Y%B")) %>% 
+  group_by(YearMonth) %>%
+  mutate(TopQtile = quantile(dlogret, 0.9))
+
+Hi_carry <- df_carry %>% filter(dlogret > TopQtile) %>% pull(YearMonth)
+
+# Find low value periods
+value_dat <- cncy_value %>% 
+    filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date) 
+
+
+df_value <- value_dat %>% 
+  mutate(YearMonth = format(Date, "%Y%B")) %>% 
+  group_by(YearMonth) %>%
+  mutate(BotQtile = quantile(dlogret, 0.1))
+
+Low_value <- df_value %>% filter(dlogret < BotQtile) %>% pull(YearMonth)
+
+# Find Strong Dollar periods
+
+basket_dat <- bbdxy %>% 
+    filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date) 
+
+
+df_basket <- basket_dat %>% 
+  mutate(YearMonth = format(Date, "%Y%B")) %>% 
+  group_by(YearMonth) %>%
+  mutate(TopQtile = quantile(dlogret, 0.9))
+
+High_Basket <- df_basket %>% filter(dlogret > TopQtile) %>% pull(YearMonth)
+
+# Compare mean returns
+
+df_zar_carry <- zar_ret %>% 
+    mutate(YearMonth = format(Date, "%Y%B")) %>% 
+    filter(YearMonth %in% Hi_carry) %>% ungroup() %>% 
+    summarise(Mean_Ret = mean(dlogret)) %>% 
+    mutate(Type = "Carry-Trade")
+
+df_zar_value <- zar_ret %>% 
+    mutate(YearMonth = format(Date, "%Y%B")) %>% 
+    filter(YearMonth %in% Low_value) %>% ungroup() %>% 
+    summarise(Mean_Ret = mean(dlogret)) %>% 
+    mutate(Type = "Value")
+
+df_zar_basket <- zar_ret %>% 
+    mutate(YearMonth = format(Date, "%Y%B")) %>% 
+    filter(YearMonth %in% High_Basket) %>% ungroup() %>% 
+    summarise(Mean_Ret = mean(dlogret)) %>% 
+    mutate(Type = "Basket")
+
+df_norm <- zar_ret %>% ungroup() %>% 
+    summarise(Mean_Ret = mean(dlogret)) %>% 
+    mutate(Type = "Normal")
+
+rbind(df_norm, df_zar_carry, df_zar_value, df_zar_basket)
+```
 
 # Question 6
 
-## What it is 
+## MSCI Funds
+
+
+```{r}
+loc6 <- "Questions/Question6/data/"
+
+
+msci <- read_rds(glue::glue("{loc6}msci.rds"))
+bonds <- read_rds(glue::glue("{loc6}bonds_10y.rds"))
+comms <- read_rds(glue::glue("{loc6}comms.rds"))
+```
+
+```{r}
+msci %>% pull(Name) %>% unique()
+bonds %>% pull(Name) %>% unique()
+comms %>% pull(Name) %>% unique()
+```
+
+* Over the past decade, the return profiles of different asset classes (Equities, Commodities, Real Estate and Bonds) have increased in their convergence (i.e., diversification by holding different asset classes have reduced).
+* Show how these comovements have increased in the past decade;
+* Show to what extent these return profiles have homogenized by considering the commonality of the sources of returns over time.
+* In your answer, be creative in using visual and statistical measures to convey the issue of
+how co-movement have changed over time.
+
+
+```{r}
+# Calculate Returns for Assets
+
+# Calculate All World Index Returns
+stock <- msci %>% filter(Name %in% "MSCI_ACWI") %>% 
+    mutate(dlogret = log(Price) - log(lag(Price))) %>% 
+    mutate(scaledret = (dlogret - 
+    mean(dlogret, na.rm = T))) %>% 
+    filter(date > dplyr::first(date)) %>% select(-Price) %>%
+    filter(date > as.Date("2005-06-20")) %>% 
+    rename(MSCI_ACWI = scaledret) %>%
+    select(date, MSCI_ACWI)
+# Calculate Japanese 10 Year Bond Returns
+bond <- bonds %>% filter(Name %in% "EURO_10Yr") %>% 
+    mutate(dlogret = Bond_10Yr/lag(Bond_10Yr) - 1) %>%
+    mutate(scaledret = (dlogret - 
+    mean(dlogret, na.rm = T))) %>% 
+    filter(date > dplyr::first(date)) %>% select(-Bond_10Yr) %>%
+    filter(date > as.Date("2005-06-20"))%>% 
+    rename(EURO_10Yr = scaledret) %>%
+    select(date, EURO_10Yr)
+# Calculate US Real Estate Returns
+re <- msci %>% filter(Name %in% "MSCI_USREIT") %>% 
+    mutate(dlogret = log(Price) - log(lag(Price))) %>% 
+    mutate(scaledret = (dlogret - 
+    mean(dlogret, na.rm = T))) %>% 
+    filter(date > dplyr::first(date)) %>% select(-Price) %>%
+    filter(date > as.Date("2005-06-20")) %>% 
+    rename(MSCI_USREIT = scaledret) %>%
+    select(date, MSCI_USREIT)
+# Calculate Brent Crude Oil Returns
+comm <- comms %>% filter(Name %in% "Oil_Brent" ) %>% 
+    mutate(dlogret = log(Price) - log(lag(Price))) %>% 
+    mutate(scaledret = (dlogret - 
+    mean(dlogret, na.rm = T))) %>% 
+    filter(date > dplyr::first(date)) %>% select(-Price) %>%
+    filter(date > as.Date("2005-06-20")) %>% 
+    rename(Oil_Brent = scaledret) %>% 
+    select(date, Oil_Brent)
+# Combine and wrangle for DCC models
+assets <- left_join(stock, bond, by = c("date")) %>% 
+    left_join(., re, by = c("date")) %>% 
+    left_join(., comm, by = c("date")) %>% 
+    tbl_xts()
+```
+
+
+```{r}
+# Renaming DCC code from Tutorial
+renamingdcc <- function(ReturnSeries, DCC.TV.Cor) {
+  
+ncolrtn <- ncol(ReturnSeries)
+namesrtn <- colnames(ReturnSeries)
+paste(namesrtn, collapse = "_")
+
+nam <- c()
+xx <- mapply(rep, times = ncolrtn:1, x = namesrtn)
+# Now let's be creative in designing a nested for loop to save the names corresponding to the columns of interest.. 
+
+# TIP: draw what you want to achieve on a paper first. Then apply code.
+
+# See if you can do this on your own first.. Then check vs my solution:
+
+nam <- c()
+for (j in 1:(ncolrtn)) {
+for (i in 1:(ncolrtn)) {
+  nam[(i + (j-1)*(ncolrtn))] <- paste(xx[[j]][1], xx[[i]][1], sep="_")
+}
+}
+
+colnames(DCC.TV.Cor) <- nam
+
+# So to plot all the time-varying correlations wrt SBK:
+ # First append the date column that has (again) been removed...
+DCC.TV.Cor <- 
+    data.frame( cbind( date = index(ReturnSeries), DCC.TV.Cor)) %>% # Add date column which dropped away...
+    mutate(date = as.Date(date)) %>%  tbl_df() 
+
+DCC.TV.Cor <- DCC.TV.Cor %>% gather(Pairs, Rho, -date)
+
+DCC.TV.Cor
+
+}
+```
+
+```{r}
+# Determine whether autocorrelation using March Test
+MarchTest(assets)
+```
+
+```{r}
+# Use tutorial code to fit gjrGARCH (1,0) and DCC (1,1)
+
+# Set GARCH specifications
+uspec <- ugarchspec(variance.model = list(model = "gjrGARCH", 
+    garchOrder = c(1, 1)), mean.model = list(armaOrder = c(1, 
+    0), include.mean = TRUE), distribution.model = "sstd")
+
+multi_univ_garch_spec <- multispec(replicate(ncol(assets), uspec))
+
+# Set DCC specifications
+spec.dcc = dccspec(multi_univ_garch_spec, dccOrder = c(1, 1), 
+    distribution = "mvnorm", lag.criterion = c("AIC", "HQ", "SC", 
+        "FPE")[1], model = c("DCC", "aDCC")[1])  
+
+# Parallelize 
+cl = makePSOCKcluster(10)
+
+# Fit GARCH
+multf = multifit(multi_univ_garch_spec, assets, cluster = cl)
+
+# Fit DCC
+fit.dcc = dccfit(spec.dcc, data = assets, solver = "solnp", 
+    cluster = cl, fit.control = list(eval.se = FALSE), fit = multf)
+
+# Check Model
+RcovList <- rcov(fit.dcc) 
+covmat = matrix(RcovList, nrow(assets), ncol(assets) * ncol(assets), 
+    byrow = TRUE)
+mc1 = MCHdiag(assets, covmat)
+```
+
+```{r}
+# Wrangle DCC Output
+dcc.time.var.cor <- rcor(fit.dcc)
+dcc.time.var.cor <- aperm(dcc.time.var.cor, c(3, 2, 1))
+dim(dcc.time.var.cor) <- c(nrow(dcc.time.var.cor), ncol(dcc.time.var.cor)^2)
+
+# Rename DCC Output
+
+dcc.time.var.cor <- renamingdcc(ReturnSeries = assets, DCC.TV.Cor = dcc.time.var.cor)
+```
+
+
+```{r}
+# Create Plots
+
+# Stocks
+g1 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), 
+    !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle = "Dynamic Conditional Correlations: MSCI_ACWI", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Bonds
+g2 <- ggplot(dcc.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), 
+    !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle="Dynamic Conditional Correlations: EURO_10Yr", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Real Estate
+g3 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), 
+    !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle = "Dynamic Conditional Correlations: MSCI_USREIT", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+
+# Commodities
+g4 <- ggplot(dcc.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), 
+    !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle = "Dynamic Conditional Correlations: Oil_Brent", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+g1
+
+```
+
+
+```{r}
+g2
+```
+
+
+```{r}
+g3
+```
+
+
+```{r}
+g4
+```
+
+
+```{r}
+# Go-GARCH following the Tutorial
+
+# GARCH Specifications
+spec.go <- gogarchspec(multi_univ_garch_spec, 
+                       distribution.model = 'mvnorm', 
+                       ica = 'fastica') 
+# Parallelize
+cl <- makePSOCKcluster(10)
+# Fit GARCH
+multf <- multifit(multi_univ_garch_spec, assets, cluster = cl)
+
+#GO-GARCH Specifications
+fit.gogarch <- gogarchfit(spec.go, 
+                      data = assets, 
+                      solver = 'hybrid', 
+                      cluster = cl, 
+                      gfun = 'tanh', 
+                      maxiter1 = 40000, 
+                      epsilon = 1e-08, 
+                      rseed = 100)
+
+# Go-Garch Fit
+print(fit.gogarch)
+```
 
 
 
+```{r}
+# Wrangle Output
+gog.time.var.cor <- rcor(fit.gogarch)
+gog.time.var.cor <- aperm(gog.time.var.cor,c(3,2,1))
+dim(gog.time.var.cor) <- c(nrow(gog.time.var.cor), ncol(gog.time.var.cor)^2)
+
+# Rename Output
+gog.time.var.cor <-
+renamingdcc(ReturnSeries = assets, DCC.TV.Cor = gog.time.var.cor)
+
+
+# Create Plots
+
+# Stocks
+g2_1 <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), 
+    !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle = "Go-Garch: MSCI_ACWI", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Bonds
+g2_2 <- ggplot(gog.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), 
+    !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle="Go-Garch: EURO_10Yr", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Real Estate
+g2_3 <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), 
+    !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle = "Go-Garch: MSCI_USREIT", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+
+# Commodities
+g2_4 <- ggplot(gog.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), 
+    !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, 
+    colour = Pairs)) + theme_hc() + labs(subtitle = "Go-GARCH: Oil_Brent", x = "", y = "") +
+    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+g2_1
+```
+
+
+# Question 7
+
+## Portfolio Construction
+
+
+```{r}
+loc7 <- "Questions/Question7/data/"
+
+MAA <- read_rds(glue::glue("{loc7}MAA.rds")) %>% select(-Name)
+msci <- read_rds(glue::glue("{loc6}msci.rds")) %>% filter(Name %in% c("MSCI_ACWI", "MSCI_USA", "MSCI_RE", "MSCI_Jap")) %>% rename(Ticker = Name)
+```
+
+
+```{r}
+# Combine Assets classes
+comb_assets <- rbind(MAA, msci) %>% arrange(date)
+
+# Looking back 3 years utilising fmxdat::safe_year_min
+comb_assets_3_years <- comb_assets %>% group_by(Ticker) %>% filter(date == fmxdat::safe_year_min(last(date), N = 3)) %>% pull(Ticker) %>% unique()
+
+# Filter all Tickers that have data for at least previous 3 years and find the earliest starting date across all Tickers
+Start_Date <- comb_assets %>% 
+    filter(Ticker %in% comb_assets_3_years) %>% 
+    group_by(Ticker) %>% 
+    summarise(date = dplyr::first(date)) %>% 
+    pull(date) %>% 
+    first()
+
+# Unique month end dates for all assets since the start date 
+EOM_dates <- comb_assets %>% 
+    filter(Ticker %in% comb_assets_3_years) %>% 
+    filter(date >= Start_Date) %>% 
+    select(date) %>% 
+    unique() %>% 
+    mutate(YM = format(date, "%Y%B")) %>% 
+    group_by(YM) %>% 
+    filter(date == dplyr::last(date)) %>% 
+    ungroup() %>% 
+    pull(date) %>% 
+    unique()
+
+# get the quarterly rebalance dates from the available dates
+quarterly_rebalance <- rmsfuns::dateconverter(first(EOM_dates), last(EOM_datevec), "weekdayEOQ") 
+
+# Create simple returns for all assets which have more than 3 years of prices and are available after the start date
+comb_assets_return <- comb_assets %>% 
+    filter(Ticker %in% comb_assets_3_years) %>% 
+    filter(date >= Start_Date) %>% 
+    group_by(Ticker) %>% 
+    mutate(Return = Price/lag(Price) - 1) %>% 
+    filter(date > dplyr::first(date)) %>% 
+    select(-Price) %>%
+    spread(Ticker, Return)
+
+# Filter out all returns on the Quarterly rebalance dates
+comb_assets_return_quarterly <- comb_assets_return %>% filter(date %in% quarterly_rebalance)
+
+```
+
+
+```{r}
+# Imputation function from prac3
+
+impute_missing_returns <- function(return_mat, impute_returns_method = "NONE"){
+  # Make sure we have a date column called date:
+  if( !"date" %in% colnames(return_mat) ) stop("No 'date' column provided in return_mat. Try again please.")
+
+  # Note my use of 'any' below...
+  # Also note that I 'return' return_mat - which stops the function and returns return_mat.
+  if( impute_returns_method %in% c("NONE", "None", "none") ) {
+    if( any(is.na(return_mat)) ) warning("There are missing values in the return matrix.. 
+                                         Consider maybe using impute_returns_method = 'Drawn_Distribution_Own' / 'Drawn_Distribution_Collective'")
+    return(return_mat)
+  }
+
+  if( impute_returns_method  == "Average") {
+
+    return_mat <-
+      return_mat %>% gather(Stocks, Returns, -date) %>%
+      group_by(date) %>%
+      mutate(Avg = mean(Returns, na.rm=T)) %>%
+      mutate(Avg = coalesce(Avg, 0)) %>% # date with no returns - set avg to zero
+      ungroup() %>%
+      mutate(Returns = coalesce(Returns, Avg)) %>% select(-Avg) %>% spread(Stocks, Returns)
+
+    # That is just so much easier when tidy right? See how I gathered and spread again to give back a wide df?
+    return(return_mat)
+  } else
+
+    if( impute_returns_method  == "Drawn_Distribution_Own") {
+
+      N <- nrow(return_mat)
+      return_mat <-
+        # DIY: see what density function does
+        left_join(return_mat %>% gather(Stocks, Returns, -date),
+                  return_mat %>% gather(Stocks, Returns, -date) %>% group_by(Stocks) %>%
+                    mutate(Dens = list(density(Returns, na.rm=T))) %>%
+                    summarise(set.seed(42), Random_Draws = list(sample(Dens[[1]]$x, N, replace = TRUE, prob=.$Dens[[1]]$y))),
+                  by = "Stocks"
+        ) %>%  group_by(Stocks) %>%
+        # Random draw from sample:
+        mutate(Returns = coalesce(Returns, Random_Draws[[1]][row_number()])) %>%
+        select(-Random_Draws) %>% ungroup() %>% spread(Stocks, Returns)
+      return(return_mat)
+    } else
+
+      if( impute_returns_method  == "Drawn_Distribution_Collective") {
+        NAll <- nrow(return_mat %>% gather(Stocks, Returns, -date))
+        # DIY: see what density function does
+        return_mat <-
+          bind_cols(
+            return_mat %>% gather(Stocks, Returns, -date),
+            return_mat %>% gather(Stocks, Returns, -date) %>%
+              mutate(Dens = list(density(Returns, na.rm=T))) %>%
+              summarise(set.seed(42), Random_Draws = list(sample(Dens[[1]]$x, NAll, replace = TRUE, prob=.$Dens[[1]]$y))) %>%
+              unnest(Random_Draws)
+          ) %>%
+          mutate(Returns = coalesce(Returns, Random_Draws)) %>% select(-Random_Draws) %>% spread(Stocks, Returns)
+        return(return_mat)
+      } else
+
+        if( impute_returns_method  == "Zero") {
+          warning("This is probably not the best idea but who am I to judge....")
+          return_mat[is.na(return_mat)] <- 0
+          return(return_mat)
+        } else
+          stop("Please provide a valid impute_returns_method method. Options include:\n'Average', 'Drawn_Distribution_Own', 'Drawn_Distribution_Collective' and 'Zero'.")
+
+  return_mat
+
+}
+
+# Impute missing values for return series
+options(scipen = 999)
+return_mat <- impute_missing_returns(comb_assets_return, impute_returns_method = "Drawn_Distribution_Collective")
+
+sum(is.na(comb_assets_return))
+# Since there are no missing values we do not need to impute
+
+# Create returns matrix
+return_mat_Nodate <- data.matrix(return_mat[, -1])
+```
 
 
 
+```{r}
+HTT <- fitHeavyTail::fit_mvt(return_mat_Nodate)
+
+mu <- return_mat %>% summarise(across(-date, ~prod(1+.)^(1/n())-1)) %>% purrr::as_vector()
+Sigma <- HTT$cov
+
+# Ensure order is the same for mu and Sigma (some optimizers are sensitive to ordering... :( )
+mu <- mu[colnames(Sigma)] 
+```
+
+
+```{r}
+# Purely for safety reasons, to avoid a non-positive definite matrix breaking your function...
+Sigma <- as.matrix( Matrix::nearPD(Sigma)$mat)
+```
+
+Creating Amat and bvec
+
+```{r}
+# Create constraints
+
+NStocks <- ncol(return_mat_Nodate)
+NEquities <- 4
+NCreditBonds <- 6
+LB = 0.001 # No lower bound
+UB = 0.4 # Upper bound for single asset
+Equities = 0.6 # Equity Upper Bound
+CreditBonds = 0.25 # Credit and Bonds Upper Bound
+meq = 1 
+
+
+# Make A Mat 
+#Equities_mat <- rbind(matrix(0, nrow = (NStocks-NEquities), ncol = NEquities), -diag(NEquities))
+#Credit_Bonds_mat <- rbind(matrix(0, (NStocks-NEquities-NCreditBonds), NCreditBonds), -diag(NCreditBonds), matrix(0, NEquities, NCreditBonds))
+
+Equities_vec <- c(rep(0, NStocks-NEquities), -rep(1, NEquities))
+Credit_Bonds_vec <- c(rep(0, NStocks-NEquities-NCreditBonds), -rep(1, NCreditBonds), rep(0, NEquities))
+
+bvec <- c(1, rep(LB, NStocks), -rep(UB, NStocks), -CreditBonds, -Equities)
+Amat <- cbind(1, diag(NStocks), -diag(NStocks), Credit_Bonds_vec, Equities_vec)
+
+
+```
+
+
+```{r}
+# And now we are ready to combine this all into getting optimal weights given these constraints:
+  
+# we will use the quadprog package"
+w.opt <- quadprog::solve.QP(Dmat = Sigma,
+                            dvec = mu, 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)$solution
+
+result.QP <- tibble(stocks = colnames(Sigma), weight = w.opt) 
+
+```
+
+Now let’s now calculate the EV, MinVol, ERC and Risk-eff optimizations from RiskPortfolios, while appending it together.
+
+```{r}
+optim_foo <- function(Type = "mv", mu, Sigma, bvec, Amat, printmsg = TRUE){
+
+    Safe_Optim <- purrr::safely(quadprog::solve.QP)
+    
+    if(Type == "mv"){ 
+        Opt_W <- Safe_Optim(Dmat = Sigma,
+                            dvec = mu, 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)
+    }
+    if(Type == "minvol"){
+        Opt_W <- Safe_Optim(Dmat = Sigma,
+                            dvec = rep(0, nrow(Sigma)), 
+                            Amat = Amat,
+                            bvec = bvec, 
+                            meq = meq)
+    }
+    if(Type == "maxdecor"){
+        Rho <- cov2cor(Sigma)
+        Opt_W <- Safe_Optim(Dmat = Rho,
+                            dvec = rep(0, nrow(Sigma)), 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)
+    }
+    if(Type == "sharpe"){
+        Amat[,1] <- mu
+        Opt_W <- Safe_Optim(Dmat = Sigma,
+                            dvec = rep(0, nrow(Sigma)), 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)
+    }
+
+    if( is.null(Opt_W$error)){
+        optimw <- tibble(Tickers = colnames(Sigma), weights = Opt_W$result$solution) %>% 
+        # Take note:
+        rename(!!Type := weights)
+  
+        if(printmsg)   optimw <- optimw %>% mutate(Result = glue::glue("Converged: {Type}"))
+  
+    } else {
+        optimw <- tibble(Tickers = colnames(Sigma), weights = 1/ncol(Sigma)) %>% 
+        # Take note:
+        rename(!!Type := weights)
+        
+        if(printmsg)   optimw <- optimw %>% mutate(Result = glue::glue("Failed to Converge: {Type}"))
+        }
+     optimw
+}
+
+
+My_Weights <- optim_foo(Type = "maxdecor", mu, Sigma, bvec = bvec, Amat = Amat, printmsg = T)
+
+My_Weights
+
+```
 
 
 
+```{r}
+# Create Rolling function
+Roll_optimizer <- function(return_mat, EOM_datevec, LookBackSel = 24, Amat, bvec){
+    return_df_used <- return_mat %>% filter(date >= EOM_datevec %m-% months(LookBackSel))
+    
+    if(return_df_used %>% nrow() < LookBackSel) return(NULL) # return NULL effectively skips the iteration when binding....
+    return_mat_Nodate <- data.matrix(return_mat[, -1])
+
+    # Calculate Sigma and mu
+    HTT <- fitHeavyTail::fit_mvt(return_mat_Nodate)
+    mu <- HTT$mu
+    Sigma <- HTT$cov
+    
+    Sigma <- as.matrix(Matrix::nearPD(Sigma)$mat)
+    
+    # Fit optimisation function with different types
+    My_Weights <- left_join(
+        optim_foo(Type = "mv", mu, Sigma, bvec, Amat, printmsg = F), 
+        optim_foo(Type = "minvol", mu, Sigma, bvec, Amat, printmsg = F), 
+        by = "Tickers") %>% 
+            left_join(., optim_foo(Type = "maxdecor", mu, Sigma, bvec, Amat, printmsg = F), by = "Tickers") %>% 
+                left_join(., optim_foo(Type = "sharpe", mu, Sigma, bvec, Amat, printmsg = F), by = "Tickers") %>% 
+        mutate(date = EOM_datevec , Look_Back_Period = LookBackSel)
+}
+
+# Calculate optimal rolling weights for each type of portfolio optimization
+Result <- quarterly_rebalance %>% map_df(~Roll_optimizer(return_mat, EOM_datevec = ., Amat = Amat, bvec = bvec, LookBackSel = 24))
+
+Result
+```
+
+Graph result over time 
+
+```{r}
+
+```
 
 
 

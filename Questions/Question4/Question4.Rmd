@@ -19,25 +19,200 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
-pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse)
+
+pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse, FactoMineR, factoextra, ggdendro)
+
+list.files('../Question3/code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
+list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 ```
 
 \newpage
 
-# Introduction {-}
+# Volatility Comparison
+
+First we have to load in the data and do some data manipulations:
+
+```{r include=FALSE}
+# Load the data from Q3
+T40 <- read_rds("../Question3/data/T40.rds")
+
+# Find the top 40 stocks from the last date 
+T40_tickers <- T40 %>% arrange(date) %>% 
+    filter(date == dplyr::last(date)) %>% 
+    arrange(desc(J200)) %>%  
+    top_n(40, J200) %>% 
+    pull(Tickers) %>% 
+    unique()
+
+# Clean up the names of the data 
+ALSI_T40 <- T40 %>% 
+    filter(Tickers %in% T40_tickers) %>% 
+    mutate(Tickers = gsub("SJ Equity", "", Tickers))
+```
+
+We first plot the returns over time to see if there are any outliers and how large they are. Below we can see there are some with large outliers but nothing too major so we will not limit the data. 
+
+```{r}
+ggplot(ALSI_T40) + geom_line(aes(x = date, y = Return, color = Tickers, alpha = 0.9)) + ggtitle("Equity Log Returns: SA") + guides(alpha = FALSE)
+```
+
+
+We need wide data to find the PCA's. There are NA values in the data so we use the impute_missing_returns function from Question 3. We impute values according to own distribution as if we impute across the whole dataframe it will bias the PCA analysis. 
+
+```{r include=FALSE}
+# Make data wide
+ALSI_T40_wide <- ALSI_T40 %>% select(date, Tickers, Return) %>% spread(Tickers, Return)
+
+# impute missing values
+ALSI_T40_wide <- impute_missing_returns(ALSI_T40_wide, impute_returns_method = "Drawn_Distribution_Own") %>% select(-date)
+```
+
+
+## PCA
+
+The scree plot below is the best visual illustration of the contribution of the top 10 PCA factors to explaining the variation. The top PCA factor explains just over 20 percent of the variation with the top 5 explaining almost 50 percent of the variation.
+
+```{r}
+# Run PCA
+ALSI_T40_pca <- PCA(ALSI_T40_wide, graph = FALSE)
+
+fviz_screeplot(ALSI_T40_pca, ncp = 10)
+```
+
+
+The figure below shows how the individual stocks contribute to the first PCA factor. This first PCA factor explains 20 percent of the movement of the top 40 index. Interestingly, in this PCA factor, one can see the largest contributors are SBK (Standard Bank), FSR (FirstRand), NED (Nedbank), ABG (Absa), REM (Remgro), SLM (Sanlam) and INP (Investec). These are all part of financials and are mostly banks. If correlated financials constitute a large part of the top 40, then we can use these as PCA’s to explain the variation of the top 40.
+
+```{r}
+fviz_contrib(ALSI_T40_pca, choice = "var", axes = 1) 
+```
+
+We do the same as above except for the second PCA. The contribution percentages are a bit higher here with Nepi Rockcastle (NRP) having the most influence. 
+
+```{r}
+fviz_contrib(ALSI_T40_pca, choice = "var", axes = 2)
+```
+
+We now visualise the direction of the variables across the first and second PCA.
+
+The following figure shows which stocks contribute to PCA 1 and PCA 2. The stocks drive largely in the same direction for the first dimension but vary quite a bit in the second. This shows opportunity for diversification in the second dimension. 
+
+```{r}
+fviz_pca_var(ALSI_T40_pca, col.var = "contrib", repel = T) + theme_minimal()
+```
+
+## Constituent correlations
+
+To calculate constituent correlations through time I calculate the correlation matrix of the top 40 constituents in the ALSI, which derived from a Ledoit-Wolf shrunk matrix. I then use the auxiliary functions loaded from Nico's gist. 
+
+```{r include=FALSE}
+# We use this due to heavy tails in the data
+Sigma <- fitHeavyTail::fit_mvt(ALSI_T40_wide) %>% .$cov
+
+corr <- cov2cor(Sigma)
+distmat <- ((1 - corr)/2)^0.5
+
+cluster <- cluster::agnes(dist(distmat), method = "ward")
+
+```
+
+Below we have complex comovement structures using a dendogram, colouring several groups that are of note.
+
+```{r}
+cluster_aux()
+
+hcdata <- dendro_data_k(cluster, 4)
+p <- plot_ggdendro(hcdata, direction = "lr", expand.y = 0.2)
+
+cols <- c("#a9a9a9", "#1f77b4", "#ff7f0e", "#2ca02c", "#AD3636")
+p <- plot_ggdendro(hcdata, direction = "tb", scale.color = cols, label.size = 2.5, branch.size = 0.5, expand.y = 0.2)
+p <- p + theme_void() + expand_limits(x = c(-1, 32))
+
+p + labs(title = "Dendogram of Top 40 ALSI stocks", caption = "Dendogram created using Ward distances and AGNES clustering")
+```
+
+## Stratify for periods of high volatility 
+
+```{r include=FALSE}
+# Determine Periods of high volatility
+
+ALSI_T40_vol <- ALSI_T40 %>% 
+  select(date, Tickers, Return) %>% 
+  arrange(date) %>% 
+  mutate(YearMonth = format(date, "%Y%B")) %>% 
+  group_by(YearMonth) %>% 
+  summarise(SD = sd(Return)*sqrt(52)) %>%
+  mutate(TopQtile = quantile(SD, 0.8))
+
+# There are 33 months of high volatility 
+Hi_Volatility <- ALSI_T40_vol %>% filter(SD > TopQtile) %>% pull(YearMonth)
+
+# Extract these months
+ALSI_T40_volatile <- ALSI_T40 %>% 
+  select(date, Tickers, Return) %>% 
+  mutate(YearMonth = format(date, "%Y%B")) %>% 
+  filter(YearMonth %in% Hi_Volatility)
+```
+
+I have stratified the data for highly volatile periods and for these periods found the PCA's. Below it is evident that that the first PCA hasa  larger contribution that the PCA of the full data, reaching almost 25 percent. All of the graph sabove are reproduced for the volatile periods below.
+
+```{r}
+# Make data wide
+ALSI_T40_volatile_wide <- ALSI_T40_volatile %>% select(date, Tickers, Return) %>% spread(Tickers, Return)
+
+# impute missing values
+ALSI_T40_volatile_wide <- impute_missing_returns(ALSI_T40_volatile_wide, impute_returns_method = "Drawn_Distribution_Own") %>% select(-date)
+
+ALSI_T40_volatile_wide_pca <- PCA(ALSI_T40_volatile_wide, graph = FALSE)
+
+fviz_screeplot(ALSI_T40_volatile_wide_pca)
+```
+
+```{r}
+fviz_contrib(ALSI_T40_volatile_wide_pca, choice = "var", axes = 1) 
+```
+
+
+```{r}
+fviz_pca_var(ALSI_T40_volatile_wide_pca, col.var = "contrib", repel = T) + theme_minimal()
+```
+
+
+```{r include=FALSE}
+# We use this due to heavy tails in the data
+Sigma_vol <- fitHeavyTail::fit_mvt(ALSI_T40_volatile_wide) %>% .$cov
+
+corr_vol <- cov2cor(Sigma_vol)
+distmat_vol <- ((1 - corr_vol)/2)^0.5
+
+cluster_vol <- cluster::agnes(dist(distmat_vol), method = "ward")
+
+```
+
+Below we have complex comovement structures using a dendogram, colouring several groups that are of note.
+
+```{r}
+hcdata_vol <- dendro_data_k(cluster_vol, 4)
+p_vol <- plot_ggdendro(hcdata_vol, direction = "lr", expand.y = 0.2)
+
+cols <- c("#a9a9a9", "#1f77b4", "#ff7f0e", "#2ca02c", "#AD3636")
+p_vol <- plot_ggdendro(hcdata, direction = "tb", scale.color = cols, label.size = 2.5, branch.size = 0.5, expand.y = 0.2)
+p_vol <- p_vol + theme_void() + expand_limits(x = c(-1, 32))
+
+p_vol + labs(title = "Dendogram of Top 40 ALSI stocks during highly volatile periods", caption = "Dendogram created using Ward distances and AGNES clustering")
+```
 
 
 
-# References {-}
-
-<div id="refs"></div>
 
 
-# Appendix {-}
 
-## Appendix A {-}
 
-## Appendix B {-}
+
+
+
+
+
+
 
 
 

@@ -19,7 +19,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
-pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse)
+pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse, sugrrants, rugarch, lubridate, forecast, robustbase, cowplot, tbl2xts, xts, fmxdat)
 
 list.files('../Question3/code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
@@ -28,20 +28,155 @@ list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.
 
 \newpage
 
-# Introduction {-}
+# Volatility and GARCH estimates
+
+The South African rand (ZAR) has over the past few years been one of the most volatile currencies;
+
+The ZAR has generally performed well during periods where G10 currency carry trades have been favourable and these currency valuations relatively cheap. Globally, it has been one of the currencies that most benefit during periods where the Dollar is comparatively strong, indicating a risk-on sentiment.
+
+
+First we have to load in the data
+
+```{r include=FALSE}
+cncy <- read_rds("data/currencies.rds")
+cncy_Carry <- read_rds("data/cncy_Carry.rds")
+cncy_value <- read_rds("data/cncy_value.rds")
+cncyIV <- read_rds("data/cncyIV.rds")
+bbdxy <- read_rds("data/bbdxy.rds")
+```
+
+
+## ZAR compared to other countries
+
+To do this comparison we will be looking at the BRICS countries: Brazil, Russia, India, China and South Africa. The graph below shows that the South African ZAR is volatile with 2 large spikes, the first in 2002 and the second in 2008. Other than these spikes the ZAR somewhat follows the general trend. 
+
+```{r}
+# find countries in cncyIV
+cncyIV_names <- cncyIV %>% group_by(date) %>% pull(Name) %>% unique()
+
+cncyIV_brics <- cncyIV %>% filter(Name %in% c("Brazil_IV", "China_IV", "Russia_IV", "India_IV", "SouthAfrica_IV")) %>%
+  filter(date > ymd(20000101)) 
+
+cncyIV_brics_plot <- cncyIV_brics %>% 
+  ggplot() +
+  geom_line(aes(x = date, y = Price, color = Name), size = 1, alpha = 0.8) +
+  fmxdat::fmx_cols() +
+  labs(x = "Date", title = "Implied Volatility of a BRICS")
+
+cncyIV_brics_plot
+```
+
+## ZAR Conditional Heterskedasticity
+
+From the Return Type Persistence plot below, it is clear that there is a level of conditional heteroskedasticity. This is clear from the region of large squared returns that show us clustering of volatility and is clear evidence of long memory in the second order process. The ACF's of the dlog returns dissipate quickly which show limited autocorrelation in returns. The ACF's of squared and absolute returns remain persistent and indicate autocorrelation. This coupled with the Box-Ljung test rejecting the hypothesis of no autocorrelation in the squared returns indicates the need for a GARCH type model. 
+
+
+```{r include=FALSE}
+zar_ret <- cncy %>% filter(date > as.Date("2009-12-31")) %>% filter(Name %in% "SouthAfrica_Cncy") %>% 
+    mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > first(date)) %>% rename(Date = date)
+
+Plotdata <- zar_ret %>% mutate(Returns = dlogret, Returns_Sqd = dlogret^2, Returns_Abs = abs(dlogret))
+Plotdata <- Plotdata %>%  pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns")
+
+```
 
 
 
-# References {-}
+```{r}
+Box.test(zar_ret$dlogret^2, type = "Ljung-Box", lag = 12)
+```
 
-<div id="refs"></div>
+```{r}
+Plotdata %>% 
+  ggplot() + 
+  geom_line(aes(x = Date, y = Returns, colour = ReturnType), alpha = 0.8) + 
+  ggtitle("Return Type Persistence") + 
+  facet_wrap(~ReturnType, nrow = 3, ncol = 1, scales = "free") + 
+  guides(alpha = "none", colour = "none") + 
+  fmxdat::theme_fmx()
+```
+
+```{r}
+acf_1 <- Plotdata %>% ggplot() + geom_acf(aes(x = ..lag.., y = dlogret)) + theme_bw() + labs(subtitle = "ACF of Dlog Ret", y = "")
+acf_2 <- Plotdata %>% ggplot() + geom_acf(aes(x = ..lag.., y = dlogret^2)) + theme_bw() + labs(subtitle = "ACF of Sqaured Dlog Ret", y = "")
+acf_3 <- Plotdata %>% ggplot() + geom_acf(aes(x = ..lag.., y = abs(dlogret))) + theme_bw() + labs(subtitle = "ACF of Absolute value of Dlog Ret", y = "")
+
+plot_grid(acf_1, acf_2, acf_3, nrow = 1)
+```
+
+Now that we know that there is conditional heteroskedasticity within the ZAR we must find the best GARCH model to fit the data to. We run a quick loop through models to find the mest model for our data. We see that gjrGARCH is the best fit for our data with the lowest Akaike (AIC) score.
+
+```{r}
+models = 1:4
+model.list = list()
+
+zar_ret_xts <- zar_ret %>% select(Date, dlogret) %>%  tbl_xts()
+
+for (p in models) { 
+  
+  garchfit = ugarchspec(
+  variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","apARCH")[p], garchOrder = c(1, 1)), 
+  
+  mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+  
+  distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[1])
+  
+  garchfit1 = ugarchfit(spec = garchfit, data=as.numeric(zar_ret_xts)) 
+  
+  model.list[[p]] = garchfit1
+}
+
+names(model.list) <- c("sGARCH","gjrGARCH","eGARCH","apARCH")
+
+fit.mat = sapply(model.list, infocriteria)  
+
+rownames(fit.mat) = rownames(infocriteria(model.list[[1]]))
+
+kable(fit.mat)
+```
+
+We then fit the gjrGARCH to our data and below we have the model coefficients.
+
+```{r}
+gjrgarch11 <-  ugarchspec(variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","fGARCH","apARCH")[2], 
+                                                garchOrder = c(1, 1)), 
+                          mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+                          distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[3])
+# Now to fit, I use as.matrix and the data - this way the plot functions we will use later will work.
+garchfit2 = ugarchfit(spec = gjrgarch11, data = as.matrix(zar_ret_xts)) 
+
+garchfit2@fit$matcoef %>% kable()
+```
+
+Below is the plot of the conditional variance of the ZAR. This plot shows how much noise is in the data and gives us a more accurate trent of the volatility. 
+
+```{r}
+# To view the conditional variance plot, use:
+sigma <- sigma(garchfit2) %>% xts_tbl() 
+colnames(sigma) <- c("date", "sigma") 
+sigma <- sigma %>% mutate(Date = as.Date(date))
+
+Plotdata <- zar_ret %>% 
+  mutate(Returns = dlogret, Returns_Sqd = dlogret^2, Returns_Abs = abs(dlogret)) %>% 
+  pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns") %>% 
+  select(Date, ReturnType, Returns)
+
+gg <- Plotdata %>% 
+  ggplot() + 
+  geom_line(data = Plotdata %>% filter(ReturnType == "Returns_Sqd") %>% select(Date, Returns) %>% unique() %>% mutate(Returns = sqrt(Returns)), 
+            aes(x = Date, y = Returns), alpha = 0.8) + 
+  geom_line(data = sigma, aes(x = Date, y = sigma), color = "red", size = 2, alpha = 0.8) + 
+  labs(title = "Comparison: Returns Sigma vs Sigma from Garch", x = "", y = "Estimated volatility") + 
+  fmxdat::theme_fmx(title = ggpts(25))
+
+fmxdat::finplot(gg, y.pct = T, y.pct_acc = 1)
+```
 
 
-# Appendix {-}
 
-## Appendix A {-}
 
-## Appendix B {-}
+
+
 
 
 

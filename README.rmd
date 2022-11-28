@@ -2,6 +2,7 @@
 output:
   md_document:
     variant: markdown_github
+always_allow_html: yes
 ---
 
 # Purpose 
@@ -41,7 +42,8 @@ rm(list = ls()) # Clean your environment:
 gc() # garbage collection 
 
 pacman::p_load("xts", "tidyverse", "tbl2xts", "PerformanceAnalytics", "lubridate", "glue", "rmsfuns", "fmxdat", "tidyr", "devtools", "readr", "TTR",
-               "DEoptimR", "robustbase", "rportfolios", "RiskPortfolios", "fitHeavyTail", "quadprog", "cowplot", "FactoMineR", "factoextra", "ggdendro")
+               "DEoptimR", "robustbase", "rportfolios", "RiskPortfolios", "fitHeavyTail", "quadprog", "cowplot", "FactoMineR", "factoextra", "ggdendro", 
+               "kableExtra", "MTS")
 list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 ```
 
@@ -50,23 +52,235 @@ list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.
 
 ## Fund Performance 
 
-## Code used for Figures and Tables
+Load in the data:
 
 ```{r}
-rm(list = ls()) # Clean your environment:
-gc() # garbage collection 
+loc1 <- "Questions/Question1/data/"
+
+ASISA <- read_rds(glue::glue("{loc1}ASISA.rds"))
+BM <- read_rds(glue::glue("{loc1}Capped_SWIX.rds"))
+AI_Fund <- read_rds(glue::glue("{loc1}AI_Max_Fund.rds"))
+
+list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
+list.files('Questions/Question3/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
 ```
+
+Upun inspection the ASISA has NA values. The best approach to deal with these is to impute them with the function created by Nico used in question 3. 
+
 ```{r}
-pacman::p_load("tidyverse", "lubridate")
+ASISA_wide <- spread(ASISA, key = Name, value = Returns)
+
+ASISA_full <- impute_missing_returns(ASISA_wide, impute_returns_method = "Drawn_Distribution_Collective")
 ```
+
+Create an average of the ASISA funds as an average for the active funds in the market for comparison.
+
 ```{r}
-list.files('Question1/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
+ASISA_ave <- ASISA_full %>% gather(Fund, Return, -date) %>% 
+    arrange(date) %>%
+    group_by(date) %>%
+    mutate(ASISA = mean(Return)) %>% # Name ave returns Asisa for left_join
+    select(date, ASISA) %>% 
+    unique()
 ```
 
-## Data 
+Join the data together to make a large dataset and find the first start date.
 
-The raw data files were placed in their respective question data folders 
+```{r}
+funds <- rbind(ASISA_ave %>% gather(key = Tickers, value = Returns, -date),
+               AI_Fund,
+               BM) %>% arrange(date)
 
+fund_start_Date <- funds %>% 
+    group_by(Tickers) %>% 
+    summarise(date = dplyr::first(date)) %>% 
+    pull(date) %>% 
+    max
+
+funds <- funds %>% filter(date >= fund_start_Date)
+
+```
+
+
+## Annualised returns
+
+Using a function adapted from class the graph below is created to show annualised returns for the Benchmark, the average ASISA and our AI fund.
+
+```{r}
+
+#======================
+# PerformanceAnalytics
+#======================
+
+idxxts <- tbl_xts(funds, cols_to_xts = Returns, spread_by = Tickers)
+
+dfplotxts <- 
+    bind_rows(
+      # Don't annualize for less than a year, e.g.:
+      idxxts %>% tail(12) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "A"),
+      
+      idxxts %>% tail(36) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "B"),
+      
+      idxxts %>% tail(60) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "C"),
+      
+      idxxts %>% tail(120) %>% PerformanceAnalytics::Return.annualized(., scale = 12) %>% data.frame() %>% mutate(Freq = "D"),
+      
+    ) %>% data.frame() %>% gather(Tickers, mu, -Freq) %>% 
+  mutate(Tickers = gsub("\\.", " ", Tickers))
+
+# Barplot_foo:
+to_string <- as_labeller(c(`A` = "1 Year", `B` = "3 Years", `C` = "5 Years", `D` = "10 Years"))
+
+  g <- 
+    
+  dfplotxts %>%
+  
+  # Compare to (they are the exact same):
+  # dfplotxts %>%
+    
+  ggplot() + 
+    
+  geom_bar( aes(Tickers, mu, fill = Tickers), stat="identity") + 
+    
+  facet_wrap(~Freq, labeller = to_string, nrow = 1) + 
+    
+  labs(x = "", y = "Returns (Ann.)" , caption = "Note:\nReturns in excess of a year are in annualized terms.") + 
+    
+  fmx_fills() + 
+    
+  geom_label(aes(Tickers, mu, label = paste0( round(mu, 4)*100, "%" )), size = ggpts(8), alpha = 0.35, fontface = "bold", nudge_y = 0.002) + 
+    
+  theme_fmx(CustomCaption = T, title.size = ggpts(43), subtitle.size = ggpts(38), 
+                caption.size = ggpts(30), 
+            
+                axis.size = ggpts(37), 
+            
+                legend.size = ggpts(35),legend.pos = "top") +
+
+  theme(axis.text.x = element_blank(), axis.title.y = element_text(vjust=2)) + 
+    
+  theme(strip.text.x = element_text(face = "bold", size = ggpts(35), margin = margin(.1, 0, .1, 0, "cm"))) 
+  
+g
+```
+
+## Violin plot of Return distribution by fund
+
+The violin plot below clearly shops that the AI fund behaves similarly to the Benchmark fund and quite opposite to the average of the ASISA funds. Taking the average of the ASISA funds will condense the density as we can see and thus is a biased view. The Benchmark fund seems to reach further, both positively and negatively in returns while the distribution of the returns for the AI fund are less dense while simultaneously being less sparse. BAsically less crowded. 
+
+```{r}
+funds
+
+gviolion <- funds %>% ggplot() + geom_violin(aes(Tickers, Returns, fill = Tickers), alpha = 0.7) + fmxdat::theme_fmx() + fmxdat::fmx_fills()
+
+fmxdat::finplot(gviolion, y.pct = T, y.pct_acc = 1, x.vert = T)
+```
+
+## Rolling returns
+
+Below we create a 3 year rolling annualised return for all the funds. The AI fund was clearly above the benchmark for a large proportion of the time, especially between 2018 and 2022. 
+
+```{r}
+plotdf_rollret <- funds %>% group_by(Tickers) %>% 
+# Epic sorcery:
+mutate(RollRets = RcppRoll::roll_prod(1 + Returns, 36, fill = NA, align = "right")^(12/36) - 1) %>% 
+    group_by(date) %>% filter(any(!is.na(RollRets))) %>% 
+    ungroup()
+
+g_roll <- plotdf_rollret %>% 
+ggplot() + 
+geom_line(aes(date, RollRets, color = Tickers), alpha = 0.7, 
+    size = 1.25) + 
+labs(title = "Rolling 3 Year Annualized Returns of funds with differing start dates", 
+    subtitle = "", x = "", y = "Rolling 3 year Returns (Ann.)", 
+    caption = "Note:\nDistortions are not evident now.") + theme_fmx(title.size = ggpts(30), 
+    subtitle.size = ggpts(5), caption.size = ggpts(25), CustomCaption = T) + 
+    
+fmx_cols()
+
+finplot(g_roll, x.date.dist = "1 year", x.date.type = "%Y", x.vert = T, 
+    y.pct = T, y.pct_acc = 1)
+```
+
+# Fees
+
+```{r}
+ASISA_fee <- ASISA_full %>% gather(Fund, Return, -date) %>% 
+    arrange(date) %>%
+    group_by(date) %>%
+    mutate(Returns = mean(Return)) %>% # Name ave returns Asisa for left_join
+    select(date, Returns) %>% 
+    unique()
+
+feeconverter <- function(x, Ann_Level) (1+x)^(1/Ann_Level)-1
+
+Start = fund_start_Date
+Gap = 3 
+Lvlset = 5
+mnthfwd = 18
+
+df_p <-ASISA_fee %>% filter(date > fund_start_Date) %>%
+        mutate('Return - 10 bps' = Returns - feeconverter(10*1e-4, Ann_Level = 12)) %>%
+        mutate('Return - 50 bps' = Returns - feeconverter(50*1e-4, Ann_Level = 12)) %>%
+        mutate('Return - 100 bps' = Returns - feeconverter(100*1e-4, Ann_Level = 12)) %>%
+        mutate('Return - 250 bps' = Returns - feeconverter(250*1e-4, Ann_Level = 12)) %>%
+        rename(Gross = Returns) %>%
+        gather(Type, Rets, -date, -Gross) %>%
+        group_by(Type) %>% filter(date > min(date)) %>%
+        mutate(CP = cumprod(1+Rets)) %>%
+        mutate(Gross = cumprod(1+Gross))
+
+Ord <- c('Return - 10 bps', 'Return - 50 bps', 'Return - 100 bps', 'Return - 250 bps')
+
+    Txt <-
+        df_p %>% filter(date == max(date)) %>%
+        mutate(date = date %m+% months(Gap)) %>%
+        mutate(Text = paste0(round(CP/Gross-1, 3)*100, "%")) %>%
+        # Order:
+        mutate(Type = as.factor(Type)) %>%
+        mutate(Type = forcats::fct_relevel(Type, Ord))
+
+    Shock350 <-
+        df_p %>% filter(date == max(date)) %>%
+        mutate(date = date %m+% months(Gap)) %>%
+        filter(Type == 'Return - 350 bps') %>% pull(CP)
+    Shock250 <-
+        df_p %>% filter(date == max(date)) %>%
+        mutate(date = date %m+% months(Gap)) %>%
+        filter(Type == 'Return - 250 bps') %>% pull(CP)
+    Shock25 <-
+        df_p %>% filter(date == max(date)) %>%
+        mutate(date = date %m+% months(Gap)) %>%
+        filter(Type == 'Return - 10 bps') %>% pull(CP)
+
+    Msg <-
+        df_p %>% ungroup() %>% filter(date > max(date) %m+% months(mnthfwd)) %>% slice(1) %>%
+        mutate(Lvl = Lvlset) %>% mutate(Msg = glue::glue("R1m invested in {format(Start, '%B %Y')}\n* 10bps: R{round(Shock25, 2)}m\n* 250bps: R{round(Shock250, 2)}m\n* 350bps: R{round(Shock350, 2)}m"))
+
+    g <-
+        df_p %>%
+        mutate(Type = as.factor(Type)) %>%
+        mutate(Type = forcats::fct_relevel(Type, Ord)) %>%
+
+
+        ggplot() +
+        geom_line(aes(date, Gross), color = "darkgreen", size = 1.5, alpha = 0.95) +
+        geom_line(aes(date, CP, color = Type), size = 1.2, alpha = 0.6) +
+        # ggrepel::geom_label_repel(data = Txt, aes(date, CP, label = Text ), hjust = 0, color = "darkred", alpha = 0.25, size = 3) +
+        geom_text(data = Txt, aes(date, CP, label = Text ), hjust = 0, color = "darkred", size = 3.3) +
+        theme_bw() +
+        geom_label(data = Msg, aes(date, Lvl, label = Msg), color = "darkgreen", alpha = 0.8, size = 4) +
+        labs(title = "Fee Impact on Cumulated Wealth",
+             subtitle = glue::glue("| Start Date: {format(Start, '%B %Y')}"),
+             x = "", y = "Cumulative Returns") +
+
+        scale_x_date(labels = scales::date_format("%Y"), date_breaks = "1 year") +
+        theme(axis.text.x=element_text(angle = 90, hjust = 1))
+
+
+    g
+
+```
 
 
 
@@ -184,7 +398,7 @@ Here we join the Break-even inflation with the monthly inflation in South Africa
 
 ```{r}
 # First find the first available data range
-BE_inflation_start <- BE_Infl %>% pull(date) %>% first
+BE_inflation_start <- BE_Infl %>% pull(date) %>% first()
 
 BE_Inflation <- rbind(ZA_Infl, 
                       BE_Infl) %>% 
@@ -335,7 +549,7 @@ fmxdat::finplot(All_Spreads_Int_VIX_plot, x.date.type = "%Y%m", x.vert = TRUE)
 First we have to load in the data
 
 ```{r}
-list.files('Question/Question3/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
+list.files('Questions/Question3/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
 
 loc3 <- "Questions/Question3/data/"
 
@@ -770,6 +984,8 @@ The function used to construct a capped portfolio and determine its performance 
 First we have to load in the data and do some data manipulations:
 
 ```{r}
+list.files('Questions/Question4/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
+
 # Load the data from Q3
 T40 <- read_rds(glue::glue("{loc3}T40.rds"))
 
@@ -830,7 +1046,7 @@ fviz_contrib(ALSI_T40_pca, choice = "var", axes = 2)
 We now visualise the direction of the variables across the first and second PCA.
 
 ```{r}
-fviz_pca_var(pca, col.var = "contrib", repel = T) + theme_minimal()
+fviz_pca_var(ALSI_T40_pca, col.var = "contrib", repel = T) + theme_minimal()
 ```
 
 # Rolling correlation
@@ -966,273 +1182,130 @@ pacman::p_load(sugrrants, rugarch)
 ```
 
 
-Test for conditional heteroskedasticity
+## ZAR compared to other countries
+
+To do this comparison we will be looking at the currency implied volatility of the BRICS countries: Brazil, Russia, India, China and South Africa. 
 
 ```{r}
-test_cond_het_func <- function(data = zar_ret){
-    
-    Plotdata <- data %>% 
-        mutate(Returns = dlogret, 
-               Returns_Sqd = dlogret^2, 
-               Returns_Abs = abs(dlogret))
-        
-        Plotdata <- Plotdata %>% 
-        pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns")
-        
-        ret_plot <- Plotdata %>% ggplot() + 
-        geom_line(aes(x = Date, y = Returns, colour = ReturnType), alpha = 0.8) + 
-            
-        ggtitle("Return Type Persistence") + 
-        facet_wrap(~ReturnType, nrow = 3, ncol = 1, scales = "free") + 
-            
-        guides(alpha = "none", colour = "none") + 
-        fmxdat::theme_fmx()
-        
-        acf_1 <- Plotdata %>% 
-        ggplot() + geom_acf(aes(x = ..lag.., y = dlogret)) + theme_bw() + labs(subtitle = "ACF of Dlog Ret", y = "")
-        acf_2 <- Plotdata %>% 
-        ggplot() + geom_acf(aes(x = ..lag.., y = dlogret^2)) + theme_bw() + labs(subtitle = "ACF of Sqaured Dlog Ret", y = "")
-        acf_3 <- Plotdata %>% 
-        ggplot() + geom_acf(aes(x = ..lag.., y = abs(dlogret))) + theme_bw() + labs(subtitle = "ACF of Absolute value of Dlog Ret", y = "")
-        
-        acf_plots <- plot_grid(acf_1, acf_2, acf_3, nrow = 1)
-        
-        box_stats <- Box.test(data$dlogret^2, type = "Ljung-Box", lag = 12)
+# find countries in cncyIV
+cncyIV_names <- cncyIV %>% group_by(date) %>% pull(Name) %>% unique()
 
-    out <- list(`Return Plots` = ret_plot,
-                `ACF Plots` = acf_plots,
-                `Box Statistics` = box_stats)
-    out
-    
-}
+cncyIV_brics <- cncyIV %>% filter(Name %in% c("Brazil_IV", "China_IV", "Russia_IV", "India_IV", "SouthAfrica_IV")) %>%
+    filter(date > ymd(20000101)) %>% 
+    ggplot() +
+    geom_line(aes(x = date, y = Price, color = Name), size = 1, alpha = 0.8) +
+    fmxdat::fmx_cols() +
+    labs(x = "Date", title = "Implied Volatility of a BRICS")
+
+cncyIV_brics
 ```
 
-Fit GARCH function
+## ZAR Conditional Heterskedasticity
+
+From the Return Type Persistence plot below, it is clear that there is a level of conditional heteroskedasticity.
 
 ```{r}
-vol_func <- function(data = zar_ret, model = "sGARCH"){
-    
-    data <- data %>% select(Date, dlogret) %>%  tbl_xts()
-    
-    gjrgarch11 = ugarchspec(variance.model = list(model = model, 
-                                              
-                                              garchOrder = c(1, 1)), 
-                        
-                        mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
-                        
-                        distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[3])
+zar_ret <- cncy %>% filter(date > as.Date("2009-12-31")) %>% filter(Name %in% "SouthAfrica_Cncy") %>% 
+    mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > first(date)) %>% rename(Date = date)
+
+Plotdata <- zar_ret %>% mutate(Returns = dlogret, Returns_Sqd = dlogret^2, Returns_Abs = abs(dlogret))
+Plotdata <- Plotdata %>%  pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns")
+
+```
+
+
+```{r}
+Box.test(zar_ret$dlogret^2, type = "Ljung-Box", lag = 12)
+```
+
+Return Plots
+```{r}
+Plotdata %>% 
+  ggplot() + 
+  geom_line(aes(x = Date, y = Returns, colour = ReturnType), alpha = 0.8) + 
+  ggtitle("Return Type Persistence") + 
+  facet_wrap(~ReturnType, nrow = 3, ncol = 1, scales = "free") + 
+  guides(alpha = "none", colour = "none") + 
+  fmxdat::theme_fmx()
+```
+
+ACF's
+```{r}
+acf_1 <- Plotdata %>% ggplot() + geom_acf(aes(x = ..lag.., y = dlogret)) + theme_bw() + labs(subtitle = "ACF of Dlog Ret", y = "")
+acf_2 <- Plotdata %>% ggplot() + geom_acf(aes(x = ..lag.., y = dlogret^2)) + theme_bw() + labs(subtitle = "ACF of Sqaured Dlog Ret", y = "")
+acf_3 <- Plotdata %>% ggplot() + geom_acf(aes(x = ..lag.., y = abs(dlogret))) + theme_bw() + labs(subtitle = "ACF of Absolute value of Dlog Ret", y = "")
+
+plot_grid(acf_1, acf_2, acf_3, nrow = 1)
+```
+
+Below is code taken from the tut in order to select the best model for the data.
+
+```{r}
+models = 1:4
+model.list = list()
+
+zar_ret_xts <- zar_ret %>% select(Date, dlogret) %>%  tbl_xts()
+
+for (p in models) { 
+  
+  garchfit = ugarchspec(
+  variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","apARCH")[p], garchOrder = c(1, 1)), 
+  
+  mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+  
+  distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[1])
+  
+  garchfit1 = ugarchfit(spec = garchfit, data=as.numeric(zar_ret_xts)) 
+  
+  model.list[[p]] = garchfit1
+}
+
+names(model.list) <- c("sGARCH","gjrGARCH","eGARCH","apARCH")
+
+fit.mat = sapply(model.list, infocriteria)  
+
+rownames(fit.mat) = rownames(infocriteria(model.list[[1]]))
+
+kable(fit.mat)
+```
+
+The model is then fit onto the best fitting model, the gjrGARCH.
+
+```{r}
+gjrgarch11 <-  ugarchspec(variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","fGARCH","apARCH")[2], 
+                                                garchOrder = c(1, 1)), 
+                          mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
+                          distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[3])
 # Now to fit, I use as.matrix and the data - this way the plot functions we will use later will work.
-garchfit2 = ugarchfit(spec = gjrgarch11, data = as.matrix(data)) 
+garchfit2 = ugarchfit(spec = gjrgarch11, data = as.matrix(zar_ret_xts)) 
 
-garchfit2
-}
+garchfit2@fit$matcoef %>% kable()
 ```
 
-Select Best Garch Model
+The model is then plotted below.
 
 ```{r}
+# To view the conditional variance plot, use:
+sigma <- sigma(garchfit2) %>% xts_tbl() 
+colnames(sigma) <- c("date", "sigma") 
+sigma <- sigma %>% mutate(Date = as.Date(date))
 
-vol_select_func <- function(data = zar_ret){
-    data <- data %>% select(Date, dlogret) %>%  tbl_xts()
-    models = 1:4
-    model.list = list()
-    
-    for (p in models) { 
-        garchfit = ugarchspec(
-        variance.model = list(model = c("sGARCH","gjrGARCH","eGARCH","apARCH")[p], garchOrder = c(1, 1)), 
-
-        mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), 
-
-        distribution.model = c("norm", "snorm", "std", "sstd", "ged", "sged", "nig", "ghyp", "jsu")[1])
-
-        garchfit1 = ugarchfit(spec = garchfit,data=as.numeric(data)) 
-
-        model.list[[p]] = garchfit1
-        }
-    names(model.list) <- c("sGARCH","gjrGARCH","eGARCH","apARCH")
-
-    fit.mat = sapply(model.list, infocriteria)  
-    
-    # Note: sapply can apply a function (infocriteria here) to a list...
-    rownames(fit.mat) = rownames(infocriteria(model.list[[1]]))
-    fit.mat
-}
-```
-
-Plot Smoothed Ret^2
-
-```{r}
-vol_plot_func <- function(data = zar_ret, fit = garch_fit){
-    # To view the conditional variance plot, use:
-    sigma <- sigma(fit) %>% xts_tbl() 
-    colnames(sigma) <- c("date", "sigma") 
-    sigma <- sigma %>% mutate(Date = as.Date(date))
-
-    Plotdata <- data %>% 
-        mutate(Returns = dlogret, 
-               Returns_Sqd = dlogret^2, 
-               Returns_Abs = abs(dlogret)) %>% 
-        pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns")
+Plotdata <- zar_ret %>% 
+  mutate(Returns = dlogret, Returns_Sqd = dlogret^2, Returns_Abs = abs(dlogret)) %>% 
+  pivot_longer(c("Returns", "Returns_Sqd", "Returns_Abs"), names_to = "ReturnType", values_to = "Returns") %>% 
+  select(Date, ReturnType, Returns)
 
 gg <- Plotdata %>% 
-    ggplot() + 
-    geom_line(data = Plotdata %>% 
-                  filter(ReturnType == "Returns_Sqd") %>% 
-                  select(Date, Returns) %>% 
-                  unique() %>% 
-                  mutate(Returns = sqrt(Returns)), 
-              aes(x = Date, y = Returns), alpha = 0.8) + 
-    geom_line(data = sigma, aes(x = Date, y = sigma), color = "red", size = 2, alpha = 0.8) + 
-    labs(title = "Comparison: Returns Sigma vs Sigma from Garch", x = "", y = "Comparison of estimated volatility") + 
-    fmxdat::theme_fmx(title = ggpts(25))
-    fmxdat::finplot(gg, y.pct = T, y.pct_acc = 1)
+  ggplot() + 
+  geom_line(data = Plotdata %>% filter(ReturnType == "Returns_Sqd") %>% select(Date, Returns) %>% unique() %>% mutate(Returns = sqrt(Returns)), 
+            aes(x = Date, y = Returns), alpha = 0.8) + 
+  geom_line(data = sigma, aes(x = Date, y = sigma), color = "red", size = 2, alpha = 0.8) + 
+  labs(title = "Comparison: Returns Sigma vs Sigma from Garch", x = "", y = "Estimated volatility") + 
+  fmxdat::theme_fmx(title = ggpts(25))
 
-}
+fmxdat::finplot(gg, y.pct = T, y.pct_acc = 1)
 ```
 
-Determine whether ZAR is more volatile
-
-```{r}
-zar_ret <- cncy %>% 
-    filter(date > as.Date("2009-12-31")) %>% 
-    filter(Name %in% "SouthAfrica_Cncy") %>% 
-    mutate(dlogret = log(Price) - lag(log(Price))) %>% 
-    filter(date > first(date)) %>% 
-    rename(Date = date)
-
-# Test for GARCH effects
-test_cond_het_func(zar_ret)
-```
-
-Find best model
-
-```{r}
-best_mod <- vol_select_func(zar_ret)
-best_mod
-```
-
-Fit Model
-
-```{r}
-garch_fit <- vol_func(zar_ret, "gjrGARCH")
-# Model Coefficients
-garch_fit@fit$matcoef
-```
-
-Plot Model
-
-```{r}
-vol_plot_func(data = zar_ret, fit = garch_fit)
-```
-
-Find highest vols
-
-```{r}
-max_vol <- cncy %>% filter(date > as.Date("2009-12-31")) %>% arrange(date) %>% 
-    group_by(Name) %>% 
-    mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > first(date)) %>% rename(Date = date) %>% mutate(vol = dlogret^2) %>% 
-    summarise(`Mean_Vol` = mean(vol)) %>% 
-    arrange(desc(Mean_Vol)) %>% top_n(10, Mean_Vol)
-```
-
-ZAR Vol and cncyIV
-
-```{r}
-# Compare Smoothed ZAR Vol to mean Global VOL
-
-# Calculate Mean Global VOL
-mean_vol <- cncyIV %>% filter(date > as.Date("2009-12-31")) %>% 
-    group_by(date) %>% 
-    summarise(mean_vol = mean(Price)) %>% 
-        mutate(Global_vol = mean_vol/max(mean_vol))
-
-# Wrangle Sigma into dataframe
-sigma <- sigma(garch_fit) %>% xts_tbl() 
-colnames(sigma) <- c("date", "sigma") 
-sigma <- sigma %>% mutate(Date = as.Date(date)) %>% 
-    mutate(ZAR_sigma = sigma/max(sigma))%>% left_join(., mean_vol, by = "date")
-
-# Plot prop of max volatility to be comparable
-q4_p2 <- sigma %>% select(-date) %>% 
-    pivot_longer(c("ZAR_sigma", "Global_vol"), names_to = "Vol_type", values_to = "VOL") %>% 
-    ggplot() +
-    geom_line(aes(Date, VOL, colour = Vol_type)) +
-    labs(title = "Comparison of ZAR Cleaned Volatility and Mean Currency Volatility", x = "", 
-         y = "Prop of Max Vol") +
-    fmx_cols() +
-    theme_fmx(title.size = ggpts(25)) 
-
-finplot(q4_p2)
-```
-
-ZAR Returns during high Carry Trade Returns
-
-```{r}
-# Stratify for high carry trade periods and check ZAR Returns
-zar_ret <- cncy %>% filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% filter(Name %in% "SouthAfrica_Cncy") %>% 
-    mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date)
-
-# Find high carry trade periods
-carry_dat <- cncy_Carry %>% filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date) 
-
-df_carry <- carry_dat %>% 
-  mutate(YearMonth = format(Date, "%Y%B")) %>% 
-  group_by(YearMonth) %>%
-  mutate(TopQtile = quantile(dlogret, 0.9))
-
-Hi_carry <- df_carry %>% filter(dlogret > TopQtile) %>% pull(YearMonth)
-
-# Find low value periods
-value_dat <- cncy_value %>% 
-    filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date) 
-
-
-df_value <- value_dat %>% 
-  mutate(YearMonth = format(Date, "%Y%B")) %>% 
-  group_by(YearMonth) %>%
-  mutate(BotQtile = quantile(dlogret, 0.1))
-
-Low_value <- df_value %>% filter(dlogret < BotQtile) %>% pull(YearMonth)
-
-# Find Strong Dollar periods
-
-basket_dat <- bbdxy %>% 
-    filter(date > as.Date("2009-12-31") & date < as.Date("2020-01-01")) %>% mutate(dlogret = log(Price) - lag(log(Price))) %>% filter(date > dplyr::first(date)) %>% rename(Date = date) 
-
-
-df_basket <- basket_dat %>% 
-  mutate(YearMonth = format(Date, "%Y%B")) %>% 
-  group_by(YearMonth) %>%
-  mutate(TopQtile = quantile(dlogret, 0.9))
-
-High_Basket <- df_basket %>% filter(dlogret > TopQtile) %>% pull(YearMonth)
-
-# Compare mean returns
-
-df_zar_carry <- zar_ret %>% 
-    mutate(YearMonth = format(Date, "%Y%B")) %>% 
-    filter(YearMonth %in% Hi_carry) %>% ungroup() %>% 
-    summarise(Mean_Ret = mean(dlogret)) %>% 
-    mutate(Type = "Carry-Trade")
-
-df_zar_value <- zar_ret %>% 
-    mutate(YearMonth = format(Date, "%Y%B")) %>% 
-    filter(YearMonth %in% Low_value) %>% ungroup() %>% 
-    summarise(Mean_Ret = mean(dlogret)) %>% 
-    mutate(Type = "Value")
-
-df_zar_basket <- zar_ret %>% 
-    mutate(YearMonth = format(Date, "%Y%B")) %>% 
-    filter(YearMonth %in% High_Basket) %>% ungroup() %>% 
-    summarise(Mean_Ret = mean(dlogret)) %>% 
-    mutate(Type = "Basket")
-
-df_norm <- zar_ret %>% ungroup() %>% 
-    summarise(Mean_Ret = mean(dlogret)) %>% 
-    mutate(Type = "Normal")
-
-rbind(df_norm, df_zar_carry, df_zar_value, df_zar_basket)
-```
 
 # Question 6
 
@@ -1242,10 +1315,13 @@ rbind(df_norm, df_zar_carry, df_zar_value, df_zar_basket)
 ```{r}
 loc6 <- "Questions/Question6/data/"
 
+list.files('Questions/Question6/code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 
 msci <- read_rds(glue::glue("{loc6}msci.rds"))
 bonds <- read_rds(glue::glue("{loc6}bonds_10y.rds"))
 comms <- read_rds(glue::glue("{loc6}comms.rds"))
+
+pacman::p_load(rmgarch)
 ```
 
 ```{r}
@@ -1254,12 +1330,18 @@ bonds %>% pull(Name) %>% unique()
 comms %>% pull(Name) %>% unique()
 ```
 
+Question: 
+
 * Over the past decade, the return profiles of different asset classes (Equities, Commodities, Real Estate and Bonds) have increased in their convergence (i.e., diversification by holding different asset classes have reduced).
 * Show how these comovements have increased in the past decade;
 * Show to what extent these return profiles have homogenized by considering the commonality of the sources of returns over time.
 * In your answer, be creative in using visual and statistical measures to convey the issue of
 how co-movement have changed over time.
 
+
+## Cleaning the data
+
+The data I include is the MSCA_ACWI, EURO_10Yr, MSCI_USREIT and the Oil_Brent.
 
 ```{r}
 # Calculate Returns for Assets
@@ -1307,81 +1389,52 @@ assets <- left_join(stock, bond, by = c("date")) %>%
     tbl_xts()
 ```
 
+Implement the DCC from Nico's code below.
 
 ```{r}
-# Renaming DCC code from Tutorial
-renamingdcc <- function(ReturnSeries, DCC.TV.Cor) {
-  
-ncolrtn <- ncol(ReturnSeries)
-namesrtn <- colnames(ReturnSeries)
-paste(namesrtn, collapse = "_")
+# Using the rugarch package, let's specify our own univariate
+# functions to be used in the dcc process:
 
-nam <- c()
-xx <- mapply(rep, times = ncolrtn:1, x = namesrtn)
-# Now let's be creative in designing a nested for loop to save the names corresponding to the columns of interest.. 
+# Step 1: Give the specficiations to be used first:
 
-# TIP: draw what you want to achieve on a paper first. Then apply code.
-
-# See if you can do this on your own first.. Then check vs my solution:
-
-nam <- c()
-for (j in 1:(ncolrtn)) {
-for (i in 1:(ncolrtn)) {
-  nam[(i + (j-1)*(ncolrtn))] <- paste(xx[[j]][1], xx[[i]][1], sep="_")
-}
-}
-
-colnames(DCC.TV.Cor) <- nam
-
-# So to plot all the time-varying correlations wrt SBK:
- # First append the date column that has (again) been removed...
-DCC.TV.Cor <- 
-    data.frame( cbind( date = index(ReturnSeries), DCC.TV.Cor)) %>% # Add date column which dropped away...
-    mutate(date = as.Date(date)) %>%  tbl_df() 
-
-DCC.TV.Cor <- DCC.TV.Cor %>% gather(Pairs, Rho, -date)
-
-DCC.TV.Cor
-
-}
-```
-
-```{r}
-# Determine whether autocorrelation using March Test
-MarchTest(assets)
-```
-
-```{r}
-# Use tutorial code to fit gjrGARCH (1,0) and DCC (1,1)
-
-# Set GARCH specifications
-uspec <- ugarchspec(variance.model = list(model = "gjrGARCH", 
-    garchOrder = c(1, 1)), mean.model = list(armaOrder = c(1, 
-    0), include.mean = TRUE), distribution.model = "sstd")
-
+# A) Univariate GARCH specifications:
+uspec <- ugarchspec(variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1)), mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), distribution.model = "sstd")
+# B) Repeat uspec n times. This specification should be
+# self-explanatory...
 multi_univ_garch_spec <- multispec(replicate(ncol(assets), uspec))
 
-# Set DCC specifications
-spec.dcc = dccspec(multi_univ_garch_spec, dccOrder = c(1, 1), 
-    distribution = "mvnorm", lag.criterion = c("AIC", "HQ", "SC", 
-        "FPE")[1], model = c("DCC", "aDCC")[1])  
+# Right, so now every series will have a GJR Garch univariate
+# specification. (see ?ugarchspec for other options...)
 
-# Parallelize 
+# C) DCC Specs
+spec.dcc = dccspec(multi_univ_garch_spec, dccOrder = c(1, 1), 
+    distribution = "mvnorm", lag.criterion = c("AIC", "HQ", "SC", "FPE")[1], model = c("DCC", "aDCC")[1])  # Change to aDCC e.g.
+
+# D) Enable clustering for speed:
 cl = makePSOCKcluster(10)
 
-# Fit GARCH
+# ------------------------ Step 2: The specs are now saved.
+# Let's now build our DCC models...  ------------------------
+
+# First, fit the univariate series for each column:
 multf = multifit(multi_univ_garch_spec, assets, cluster = cl)
 
-# Fit DCC
-fit.dcc = dccfit(spec.dcc, data = assets, solver = "solnp", 
-    cluster = cl, fit.control = list(eval.se = FALSE), fit = multf)
+# Now we can use multf to estimate the dcc model using our
+# dcc.spec:
+fit.dcc = dccfit(spec.dcc, data = assets, solver = "solnp", cluster = cl, fit.control = list(eval.se = FALSE), fit = multf)
 
-# Check Model
-RcovList <- rcov(fit.dcc) 
-covmat = matrix(RcovList, nrow(assets), ncol(assets) * ncol(assets), 
-    byrow = TRUE)
-mc1 = MCHdiag(assets, covmat)
+# And that is our DCC fitted model!
+
+# We can now test the model's fit as follows: Let's use the
+# covariance matrices to test the adequacy of MV model in
+# fitting mean residual processes:
+RcovList <- rcov(fit.dcc)  # This is now a list of the monthly covariances of our DCC model series.
+covmat <- matrix(RcovList, nrow(assets), ncol(assets) * ncol(assets), byrow = TRUE)
+mc1 <- MCHdiag(assets, covmat)
+
 ```
+
+We have to wrangle the ouput and we utilize Nico's renamingdcc function which is stored in the code folder of this questions to do this. 
 
 ```{r}
 # Wrangle DCC Output
@@ -1390,72 +1443,77 @@ dcc.time.var.cor <- aperm(dcc.time.var.cor, c(3, 2, 1))
 dim(dcc.time.var.cor) <- c(nrow(dcc.time.var.cor), ncol(dcc.time.var.cor)^2)
 
 # Rename DCC Output
-
 dcc.time.var.cor <- renamingdcc(ReturnSeries = assets, DCC.TV.Cor = dcc.time.var.cor)
 ```
 
+DCC model has been fit! Now time for graphs.
 
 ```{r}
 # Create Plots
 
 # Stocks
-g1 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), 
-    !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle = "Dynamic Conditional Correlations: MSCI_ACWI", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+g1 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_ACWI", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
 
 # Bonds
-g2 <- ggplot(dcc.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), 
-    !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle="Dynamic Conditional Correlations: EURO_10Yr", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+g2 <- ggplot(dcc.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) +
+  labs(subtitle="Dynamic Conditional Correlations: EURO_10Yr", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
 
 # Real Estate
-g3 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), 
-    !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle = "Dynamic Conditional Correlations: MSCI_USREIT", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+g3 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_USREIT", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
 
 
 # Commodities
-g4 <- ggplot(dcc.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), 
-    !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle = "Dynamic Conditional Correlations: Oil_Brent", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
-
-g1
-
+g4 <- ggplot(dcc.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: Oil_Brent", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
 ```
 
+## Graphs for DCC
+
+First graph is that of the Stocks
+
+```{r}
+g1
+```
+
+Second graph is of Bonds.
 
 ```{r}
 g2
 ```
 
+Third graph is of Real estate.
 
 ```{r}
 g3
 ```
 
+Fourth graph is of Commodities.
 
 ```{r}
 g4
 ```
 
+## Wake me up before you GoGARCH
+
+Time to fit the GoGARCH to our data for more flexibility.
 
 ```{r}
-# Go-GARCH following the Tutorial
+# Go-GARCH following the prac
 
-# GARCH Specifications
+# Let's keep using our earlier first step individual garch definitions (GJR):
+# Now we create a gogarch model specification:
 spec.go <- gogarchspec(multi_univ_garch_spec, 
-                       distribution.model = 'mvnorm', 
-                       ica = 'fastica') 
-# Parallelize
+                       distribution.model = 'mvnorm', # or manig.
+                       ica = 'fastica') # Note: we use the fastICA
 cl <- makePSOCKcluster(10)
-# Fit GARCH
 multf <- multifit(multi_univ_garch_spec, assets, cluster = cl)
 
-#GO-GARCH Specifications
 fit.gogarch <- gogarchfit(spec.go, 
                       data = assets, 
                       solver = 'hybrid', 
@@ -1464,12 +1522,11 @@ fit.gogarch <- gogarchfit(spec.go,
                       maxiter1 = 40000, 
                       epsilon = 1e-08, 
                       rseed = 100)
-
-# Go-Garch Fit
+# Go-GARCH fit
 print(fit.gogarch)
 ```
 
-
+Wrangle again.
 
 ```{r}
 # Wrangle Output
@@ -1478,38 +1535,64 @@ gog.time.var.cor <- aperm(gog.time.var.cor,c(3,2,1))
 dim(gog.time.var.cor) <- c(nrow(gog.time.var.cor), ncol(gog.time.var.cor)^2)
 
 # Rename Output
-gog.time.var.cor <-
-renamingdcc(ReturnSeries = assets, DCC.TV.Cor = gog.time.var.cor)
+gog.time.var.cor <- renamingdcc(ReturnSeries = assets, DCC.TV.Cor = gog.time.var.cor)
+```
 
+Plot again.
 
+```{r}
 # Create Plots
 
 # Stocks
-g2_1 <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), 
-    !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle = "Go-Garch: MSCI_ACWI", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+g1_go <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_ACWI", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
 
 # Bonds
-g2_2 <- ggplot(gog.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), 
-    !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle="Go-Garch: EURO_10Yr", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+g2_go <- ggplot(gog.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) +
+  labs(subtitle="Dynamic Conditional Correlations: EURO_10Yr", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
 
 # Real Estate
-g2_3 <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), 
-    !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle = "Go-Garch: MSCI_USREIT", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+g3_go <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_USREIT", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
 
 
 # Commodities
-g2_4 <- ggplot(gog.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), 
-    !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, 
-    colour = Pairs)) + theme_hc() + labs(subtitle = "Go-GARCH: Oil_Brent", x = "", y = "") +
-    fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+g4_go <- ggplot(gog.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: Oil_Brent", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+```
 
-g2_1
+## Graphs for all assets with the Go-GARCH fit
+
+* Stocks
+
+```{r}
+g1_go
+```
+
+* Bonds
+
+```{r}
+g2_go
+```
+
+* Real Estate
+
+```{r}
+g3_go
+```
+
+* Commodities
+
+```{r}
+g4_go
+```
+
+```{r}
+detach("package:rmgarch", unload=TRUE)
 ```
 
 
@@ -1517,14 +1600,32 @@ g2_1
 
 ## Portfolio Construction
 
+First thing, we load in the data and source any necessary functions. 
 
 ```{r}
 loc7 <- "Questions/Question7/data/"
+
+list.files('Questions/Question3/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
+list.files('code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
 
 MAA <- read_rds(glue::glue("{loc7}MAA.rds")) %>% select(-Name)
 msci <- read_rds(glue::glue("{loc6}msci.rds")) %>% filter(Name %in% c("MSCI_ACWI", "MSCI_USA", "MSCI_RE", "MSCI_Jap")) %>% rename(Ticker = Name)
 ```
 
+This portfolio is under the following constraints:
+
+* Long-only strategy;
+* When using covariance and mean forecasts, use a look-back of less than 3 years;
+* Do not hold any assets with less than 3 years’ returns data;
+* Apply Quarterly Rebalancing;
+* Limit exposure to Bonds and credit instruments at 25%;
+* Limit exposure to Equities at 60%;
+* Limit single asset exposure at 40%;
+
+
+## Data 
+
+I first combine the assets and find all Tickers that have data for at least 3 years. We then find the end of month dates as well as create quarterly rebalance dates using rmsfuns dateconverter. We use this to filter our data for the returns on the rebalance dates.
 
 ```{r}
 # Combine Assets classes
@@ -1555,7 +1656,7 @@ EOM_dates <- comb_assets %>%
     unique()
 
 # get the quarterly rebalance dates from the available dates
-quarterly_rebalance <- rmsfuns::dateconverter(first(EOM_dates), last(EOM_datevec), "weekdayEOQ") 
+quarterly_rebalance <- rmsfuns::dateconverter(first(EOM_dates), last(EOM_dates), "weekdayEOQ") 
 
 # Create simple returns for all assets which have more than 3 years of prices and are available after the start date
 comb_assets_return <- comb_assets %>% 
@@ -1572,91 +1673,19 @@ comb_assets_return_quarterly <- comb_assets_return %>% filter(date %in% quarterl
 
 ```
 
+I utilise the function impute_missing_returns with values drawn from the collective distribution in order to impute our NA values for return. 
 
 ```{r}
-# Imputation function from prac3
-
-impute_missing_returns <- function(return_mat, impute_returns_method = "NONE"){
-  # Make sure we have a date column called date:
-  if( !"date" %in% colnames(return_mat) ) stop("No 'date' column provided in return_mat. Try again please.")
-
-  # Note my use of 'any' below...
-  # Also note that I 'return' return_mat - which stops the function and returns return_mat.
-  if( impute_returns_method %in% c("NONE", "None", "none") ) {
-    if( any(is.na(return_mat)) ) warning("There are missing values in the return matrix.. 
-                                         Consider maybe using impute_returns_method = 'Drawn_Distribution_Own' / 'Drawn_Distribution_Collective'")
-    return(return_mat)
-  }
-
-  if( impute_returns_method  == "Average") {
-
-    return_mat <-
-      return_mat %>% gather(Stocks, Returns, -date) %>%
-      group_by(date) %>%
-      mutate(Avg = mean(Returns, na.rm=T)) %>%
-      mutate(Avg = coalesce(Avg, 0)) %>% # date with no returns - set avg to zero
-      ungroup() %>%
-      mutate(Returns = coalesce(Returns, Avg)) %>% select(-Avg) %>% spread(Stocks, Returns)
-
-    # That is just so much easier when tidy right? See how I gathered and spread again to give back a wide df?
-    return(return_mat)
-  } else
-
-    if( impute_returns_method  == "Drawn_Distribution_Own") {
-
-      N <- nrow(return_mat)
-      return_mat <-
-        # DIY: see what density function does
-        left_join(return_mat %>% gather(Stocks, Returns, -date),
-                  return_mat %>% gather(Stocks, Returns, -date) %>% group_by(Stocks) %>%
-                    mutate(Dens = list(density(Returns, na.rm=T))) %>%
-                    summarise(set.seed(42), Random_Draws = list(sample(Dens[[1]]$x, N, replace = TRUE, prob=.$Dens[[1]]$y))),
-                  by = "Stocks"
-        ) %>%  group_by(Stocks) %>%
-        # Random draw from sample:
-        mutate(Returns = coalesce(Returns, Random_Draws[[1]][row_number()])) %>%
-        select(-Random_Draws) %>% ungroup() %>% spread(Stocks, Returns)
-      return(return_mat)
-    } else
-
-      if( impute_returns_method  == "Drawn_Distribution_Collective") {
-        NAll <- nrow(return_mat %>% gather(Stocks, Returns, -date))
-        # DIY: see what density function does
-        return_mat <-
-          bind_cols(
-            return_mat %>% gather(Stocks, Returns, -date),
-            return_mat %>% gather(Stocks, Returns, -date) %>%
-              mutate(Dens = list(density(Returns, na.rm=T))) %>%
-              summarise(set.seed(42), Random_Draws = list(sample(Dens[[1]]$x, NAll, replace = TRUE, prob=.$Dens[[1]]$y))) %>%
-              unnest(Random_Draws)
-          ) %>%
-          mutate(Returns = coalesce(Returns, Random_Draws)) %>% select(-Random_Draws) %>% spread(Stocks, Returns)
-        return(return_mat)
-      } else
-
-        if( impute_returns_method  == "Zero") {
-          warning("This is probably not the best idea but who am I to judge....")
-          return_mat[is.na(return_mat)] <- 0
-          return(return_mat)
-        } else
-          stop("Please provide a valid impute_returns_method method. Options include:\n'Average', 'Drawn_Distribution_Own', 'Drawn_Distribution_Collective' and 'Zero'.")
-
-  return_mat
-
-}
-
-# Impute missing values for return series
-options(scipen = 999)
 return_mat <- impute_missing_returns(comb_assets_return, impute_returns_method = "Drawn_Distribution_Collective")
 
-sum(is.na(comb_assets_return))
-# Since there are no missing values we do not need to impute
+sum(is.na(return_mat))
+# Since there return_mat no missing values we do not need to impute
 
 # Create returns matrix
 return_mat_Nodate <- data.matrix(return_mat[, -1])
 ```
 
-
+I use fitHeavyTail as our data has heavy tails and get the means and covariance matrix for our data.
 
 ```{r}
 HTT <- fitHeavyTail::fit_mvt(return_mat_Nodate)
@@ -1668,13 +1697,14 @@ Sigma <- HTT$cov
 mu <- mu[colnames(Sigma)] 
 ```
 
+The covariance matrix must not be a non-positive definite matrix and we push it close to being postive definite in order to not break our function. 
 
 ```{r}
 # Purely for safety reasons, to avoid a non-positive definite matrix breaking your function...
 Sigma <- as.matrix( Matrix::nearPD(Sigma)$mat)
 ```
 
-Creating Amat and bvec
+Creating the Amat and bvec matrices. This took a lot of paper and thinking but I am pretty sure it is correct. 
 
 ```{r}
 # Create constraints
@@ -1688,20 +1718,15 @@ Equities = 0.6 # Equity Upper Bound
 CreditBonds = 0.25 # Credit and Bonds Upper Bound
 meq = 1 
 
-
-# Make A Mat 
-#Equities_mat <- rbind(matrix(0, nrow = (NStocks-NEquities), ncol = NEquities), -diag(NEquities))
-#Credit_Bonds_mat <- rbind(matrix(0, (NStocks-NEquities-NCreditBonds), NCreditBonds), -diag(NCreditBonds), matrix(0, NEquities, NCreditBonds))
-
 Equities_vec <- c(rep(0, NStocks-NEquities), -rep(1, NEquities))
 Credit_Bonds_vec <- c(rep(0, NStocks-NEquities-NCreditBonds), -rep(1, NCreditBonds), rep(0, NEquities))
 
 bvec <- c(1, rep(LB, NStocks), -rep(UB, NStocks), -CreditBonds, -Equities)
 Amat <- cbind(1, diag(NStocks), -diag(NStocks), Credit_Bonds_vec, Equities_vec)
 
-
 ```
 
+Fun little optimizer we have here.
 
 ```{r}
 # And now we are ready to combine this all into getting optimal weights given these constraints:
@@ -1717,7 +1742,9 @@ result.QP <- tibble(stocks = colnames(Sigma), weight = w.opt)
 
 ```
 
-Now let’s now calculate the EV, MinVol, ERC and Risk-eff optimizations from RiskPortfolios, while appending it together.
+Now let’s now calculate the EV, MinVol, ERC and Risk-off optimizations from RiskPortfolios, while appending it together.
+
+I am not sure if I got the math correct here. 
 
 ```{r}
 optim_foo <- function(Type = "mv", mu, Sigma, bvec, Amat, printmsg = TRUE){
@@ -1779,12 +1806,12 @@ My_Weights
 
 ```
 
-
+Here we use the rolling function from the practicals and then map our optimizer across our reabalnce dates.
 
 ```{r}
 # Create Rolling function
 Roll_optimizer <- function(return_mat, EOM_datevec, LookBackSel = 24, Amat, bvec){
-    return_df_used <- return_mat %>% filter(date >= EOM_datevec %m-% months(LookBackSel))
+    return_df_used <- return_mat %>% filter(date >= fmxdat::safe_month_min(EOM_datevec, LookBackSel))
     
     if(return_df_used %>% nrow() < LookBackSel) return(NULL) # return NULL effectively skips the iteration when binding....
     return_mat_Nodate <- data.matrix(return_mat[, -1])
@@ -1807,34 +1834,89 @@ Roll_optimizer <- function(return_mat, EOM_datevec, LookBackSel = 24, Amat, bvec
 }
 
 # Calculate optimal rolling weights for each type of portfolio optimization
-Result <- quarterly_rebalance %>% map_df(~Roll_optimizer(return_mat, EOM_datevec = ., Amat = Amat, bvec = bvec, LookBackSel = 24))
+Result <- quarterly_rebalance %>% map_df(~Roll_optimizer(return_mat, EOM_datevec = ., Amat = Amat, bvec = bvec, LookBackSel = 36))
 
 Result
 ```
 
-Graph result over time 
+Graph result over time for mv weights:
 
 ```{r}
+mv_weights <- Result %>% select(date, Tickers, mv) %>% spread(., key = Tickers, value = mv)
+minvol_weights <- Result %>% select(date, Tickers, minvol) %>% spread(., key = Tickers, value = minvol)
+maxdecor_weights <- Result %>% select(date, Tickers, maxdecor) %>% spread(., key = Tickers, value = maxdecor)
+sharpe_weights <- Result %>% select(date, Tickers, sharpe) %>% spread(., key = Tickers, value = sharpe)
 
+mv_weights %>% 
+  tbl_xts() %>% 
+  #.[endpoints(.,'months')] %>% 
+  chart.StackedBar()
 ```
 
+Now find the portfolio return for all the different types of weightings.
 
+```{r}
+# returns of the data
+return_mat_xts <- return_mat %>% filter(date %in% quarterly_rebalance) %>% tbl_xts()
 
+# Portfolio returns for mv weights
+mv_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = mv_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
 
+mv_RetPort_ret <- mv_RetPort$returns %>% xts_tbl() %>% rename(mv_ret = portfolio.returns)
 
+# Portfolio returns for mv weights
+minvol_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = minvol_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
 
+minvol_RetPort_ret <- minvol_RetPort$returns %>% xts_tbl() %>% rename(minvol_ret = portfolio.returns) %>% select(-date)
 
+# Portfolio returns for mv weights
+sharpe_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = sharpe_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
 
+sharpe_RetPort_ret <- sharpe_RetPort$returns %>% xts_tbl() %>% rename(sharpe_ret = portfolio.returns) %>% select(-date)
 
+# Portfolio returns for mv weights
+maxdecor_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = maxdecor_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
 
+maxdecor_RetPort_ret <- maxdecor_RetPort$returns %>% xts_tbl() %>% rename(maxdecor_ret = portfolio.returns) %>% select(-date)
 
+portfolio_cum_return <- cbind(mv_RetPort_ret, minvol_RetPort_ret, sharpe_RetPort_ret, maxdecor_RetPort_ret) %>%  
+    pivot_longer(c("mv_ret", "minvol_ret", "sharpe_ret", "maxdecor_ret"), names_to = "Portfolio", values_to = "Returns") %>% 
+    group_by(Portfolio) %>% 
+    mutate(cumreturn_Rand = (cumprod(1 + Returns)))
 
+portfolio_cum_return_plot <- portfolio_cum_return %>% 
+    ggplot() +
+    geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + 
+    fmxdat::fmx_cols() + 
+    labs(title = "Cumulative Returns for ALSI and SWIX", y = "Cumulative Returns", x = "") + 
+    fmxdat::theme_fmx(title.size = ggpts(25))
 
-
-
-
-
-
+finplot(portfolio_cum_return_plot)
+```
 
 
 

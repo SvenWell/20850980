@@ -74,6 +74,10 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 5, fig.pos="H", fig.pos = 'H')
+pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse, sugrrants, rugarch, lubridate, forecast, robustbase, cowplot, tbl2xts, xts, fmxdat, rmgarch, MTS)
+
+list.files('../Question3/code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
+list.files('code/', full.names = T, recursive = T) %>% .[grepl('.R', .)] %>% as.list() %>% walk(~source(.))
 ```
 
 
@@ -83,22 +87,283 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width 
 
 # Introduction \label{Introduction}
 
+This report uses the return profiles of different asset classes to investigate if diversification ability has decreased in the last decade. The main methodology will be with the use of a DCC model allowing for correlations between series to vary over time.
+
+```{r include=FALSE}
+# Load in the data
+msci <- read_rds("data/msci.rds")
+bonds <- read_rds("data/bonds_10y.rds")
+comms <- read_rds("data/comms.rds")
+```
+
+## Data
+
+The data I include is the MSCA_ACWI, EURO_10Yr, MSCI_USREIT and the Oil_Brent.
+
+```{r include=FALSE}
+# Calculate Returns for Assets
+
+# Calculate All World Index Returns
+stock <- msci %>% filter(Name %in% "MSCI_ACWI") %>% 
+  mutate(dlogret = log(Price) - log(lag(Price))) %>% 
+  mutate(scaledret = (dlogret - 
+  mean(dlogret, na.rm = T))) %>% 
+  filter(date > dplyr::first(date)) %>% select(-Price) %>%
+  filter(date > as.Date("2005-06-20")) %>% 
+  rename(MSCI_ACWI = scaledret) %>%
+  select(date, MSCI_ACWI)
+
+# Calculate European 10 Year Bond Returns
+bond <- bonds %>% filter(Name %in% "EURO_10Yr") %>% 
+  mutate(dlogret = Bond_10Yr/lag(Bond_10Yr) - 1) %>%
+  mutate(scaledret = (dlogret - 
+  mean(dlogret, na.rm = T))) %>% 
+  filter(date > dplyr::first(date)) %>% select(-Bond_10Yr) %>%
+  filter(date > as.Date("2005-06-20"))%>% 
+  rename(EURO_10Yr = scaledret) %>%
+  select(date, EURO_10Yr)
+
+# Calculate US Real Estate Returns
+re <- msci %>% filter(Name %in% "MSCI_USREIT") %>% 
+  mutate(dlogret = log(Price) - log(lag(Price))) %>% 
+  mutate(scaledret = (dlogret - 
+  mean(dlogret, na.rm = T))) %>% 
+  filter(date > dplyr::first(date)) %>% select(-Price) %>%
+  filter(date > as.Date("2005-06-20")) %>% 
+  rename(MSCI_USREIT = scaledret) %>%
+  select(date, MSCI_USREIT)
+
+# Calculate Brent Crude Oil Returns
+comm <- comms %>% filter(Name %in% "Oil_Brent" ) %>% 
+  mutate(dlogret = log(Price) - log(lag(Price))) %>% 
+  mutate(scaledret = (dlogret - 
+  mean(dlogret, na.rm = T))) %>% 
+  filter(date > dplyr::first(date)) %>% select(-Price) %>%
+  filter(date > as.Date("2005-06-20")) %>% 
+  rename(Oil_Brent = scaledret) %>% 
+  select(date, Oil_Brent)
+
+# Combine and wrangle for DCC models
+assets <- left_join(stock, bond, by = c("date")) %>% 
+  left_join(., re, by = c("date")) %>% 
+  left_join(., comm, by = c("date")) %>% 
+  tbl_xts()
+```
+
+## Test the data
+
+First we will look at the March test which indicates that all the MV portmanteau tests reject the null of no conditional heteroskedasticity, motivating the use of MVGARCH models. 
+
+```{r}
+MTS::MarchTest(assets)
+```
+## Implement DCC Model
+
+```{r include=FALSE}
+# Using the rugarch package, let's specify our own univariate
+# functions to be used in the dcc process:
+
+# Step 1: Give the specficiations to be used first:
+
+# A) Univariate GARCH specifications:
+uspec <- ugarchspec(variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1)), mean.model = list(armaOrder = c(1, 0), include.mean = TRUE), distribution.model = "sstd")
+# B) Repeat uspec n times. This specification should be
+# self-explanatory...
+multi_univ_garch_spec <- multispec(replicate(ncol(assets), uspec))
+
+# Right, so now every series will have a GJR Garch univariate
+# specification. (see ?ugarchspec for other options...)
+
+# C) DCC Specs
+spec.dcc = dccspec(multi_univ_garch_spec, dccOrder = c(1, 1), 
+    distribution = "mvnorm", lag.criterion = c("AIC", "HQ", "SC", "FPE")[1], model = c("DCC", "aDCC")[1])  # Change to aDCC e.g.
+
+# D) Enable clustering for speed:
+cl = makePSOCKcluster(10)
+
+# ------------------------ Step 2: The specs are now saved.
+# Let's now build our DCC models...  ------------------------
+
+# First, fit the univariate series for each column:
+multf = multifit(multi_univ_garch_spec, assets, cluster = cl)
+
+# Now we can use multf to estimate the dcc model using our
+# dcc.spec:
+fit.dcc = dccfit(spec.dcc, data = assets, solver = "solnp", cluster = cl, fit.control = list(eval.se = FALSE), fit = multf)
+
+# And that is our DCC fitted model!
+
+# We can now test the model's fit as follows: Let's use the
+# covariance matrices to test the adequacy of MV model in
+# fitting mean residual processes:
+RcovList <- rcov(fit.dcc)  # This is now a list of the monthly covariances of our DCC model series.
+covmat <- matrix(RcovList, nrow(assets), ncol(assets) * ncol(assets), byrow = TRUE)
+mc1 <- MCHdiag(assets, covmat)
+
+```
+
+```{r include=FALSE}
+# Wrangle DCC Output
+dcc.time.var.cor <- rcor(fit.dcc)
+dcc.time.var.cor <- aperm(dcc.time.var.cor, c(3, 2, 1))
+dim(dcc.time.var.cor) <- c(nrow(dcc.time.var.cor), ncol(dcc.time.var.cor)^2)
+
+# Rename DCC Output
+dcc.time.var.cor <- renamingdcc(ReturnSeries = assets, DCC.TV.Cor = dcc.time.var.cor)
+```
+
+
+```{r}
+# Create Plots
+
+# Stocks
+g1 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_ACWI", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Bonds
+g2 <- ggplot(dcc.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) +
+  labs(subtitle="Dynamic Conditional Correlations: EURO_10Yr", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Real Estate
+g3 <- ggplot(dcc.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_USREIT", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+
+# Commodities
+g4 <- ggplot(dcc.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: Oil_Brent", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+```
+
+
+```{r}
+g1
+```
+
+
+```{r}
+g2
+```
+
+
+```{r}
+g3
+```
+
+
+```{r}
+g4
+```
+
+```{r}
+# Go-GARCH following the prac
+
+# Let's keep using our earlier first step individual garch definitions (GJR):
+# Now we create a gogarch model specification:
+spec.go <- gogarchspec(multi_univ_garch_spec, 
+                       distribution.model = 'mvnorm', # or manig.
+                       ica = 'fastica') # Note: we use the fastICA
+cl <- makePSOCKcluster(10)
+multf <- multifit(multi_univ_garch_spec, assets, cluster = cl)
+
+fit.gogarch <- gogarchfit(spec.go, 
+                      data = assets, 
+                      solver = 'hybrid', 
+                      cluster = cl, 
+                      gfun = 'tanh', 
+                      maxiter1 = 40000, 
+                      epsilon = 1e-08, 
+                      rseed = 100)
+# Go-GARCH fit
+print(fit.gogarch)
+```
+
+
+```{r}
+# Wrangle Output
+gog.time.var.cor <- rcor(fit.gogarch)
+gog.time.var.cor <- aperm(gog.time.var.cor,c(3,2,1))
+dim(gog.time.var.cor) <- c(nrow(gog.time.var.cor), ncol(gog.time.var.cor)^2)
+
+# Rename Output
+gog.time.var.cor <- renamingdcc(ReturnSeries = assets, DCC.TV.Cor = gog.time.var.cor)
+
+
+```
+
+
+```{r}
+# Create Plots
+
+# Stocks
+g1_go <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_ACWI_", Pairs), !grepl("_MSCI_ACWI", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_ACWI", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Bonds
+g2_go <- ggplot(gog.time.var.cor %>% filter(grepl("EURO_10Yr_", Pairs), !grepl("_EURO_10Yr", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) +
+  labs(subtitle="Dynamic Conditional Correlations: EURO_10Yr", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+# Real Estate
+g3_go <- ggplot(gog.time.var.cor %>% filter(grepl("MSCI_USREIT_", Pairs), !grepl("_MSCI_USREIT", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: MSCI_USREIT", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+
+
+# Commodities
+g4_go <- ggplot(gog.time.var.cor %>% filter(grepl("Oil_Brent_", Pairs), !grepl("_Oil_Brent", Pairs))) + geom_line(aes(x = date, y = Rho, colour = Pairs)) + 
+  labs(subtitle = "Dynamic Conditional Correlations: Oil_Brent", x = "", y = "") +
+  fmx_cols() + theme_fmx(subtitle.size = ggpts(25), legend.size = ggpts(15))
+```
+
+
+```{r}
+g1_go
+```
+
+
+
+```{r}
+g2_go
+```
+
+
+```{r}
+g3_go
+```
+
+
+```{r}
+g4_go
+```
+
 
 # Conclusion
 
-<!-- Make title of bibliography here: -->
-<!-- \newpage -->
-
-\newpage
-
-# References {-}
-
-<div id="refs"></div>
 
 
-# Appendix {-}
 
-## Appendix A {-}
 
-## Appendix B {-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

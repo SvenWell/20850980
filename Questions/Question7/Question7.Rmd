@@ -19,7 +19,8 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
-pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse)
+pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse, PerformanceAnalytics, tbl2xts, fmxdat)
+list.files('../Question3/code/', full.names = T, recursive = T) %>% as.list() %>% walk(~source(.))
 ```
 
 \newpage
@@ -27,17 +28,308 @@ pacman::p_load(modelsummary, gt, knitr, kableExtra, tidyverse)
 # Introduction {-}
 
 
+Load in the data 
 
-# References {-}
+```{r include=FALSE}
+MAA <- read_rds("data/MAA.rds") %>% select(-Name)
+msci <- read_rds("data/msci.rds") %>% filter(Name %in% c("MSCI_ACWI", "MSCI_USA", "MSCI_RE", "MSCI_Jap")) %>% rename(Ticker = Name)
+```
 
-<div id="refs"></div>
+This portfolio is under the following constraints:
+
+* Long-only strategy;
+* When using covariance and mean forecasts, use a look-back of less than 3 years;
+* Do not hold any assets with less than 3 years’ returns data;
+* Apply Quarterly Rebalancing;
+* Limit exposure to Bonds and credit instruments at 25%;
+* Limit exposure to Equities at 60%;
+* Limit single asset exposure at 40%;
 
 
-# Appendix {-}
+## Data 
 
-## Appendix A {-}
+I first combine the assets and find all Tickers that have data for at least 3 years. We then find the end of month dates as well as create quarterly rebalance dates using rmsfuns dateconverter. We use this to filter our data for the returns on the rebalance dates.
 
-## Appendix B {-}
+```{r include=FALSE}
+# Combine Assets classes
+comb_assets <- rbind(MAA, msci) %>% arrange(date)
 
+# Looking back 3 years utilising fmxdat::safe_year_min
+comb_assets_3_years <- comb_assets %>% group_by(Ticker) %>% filter(date == fmxdat::safe_year_min(last(date), N = 3)) %>% pull(Ticker) %>% unique()
+
+# Filter all Tickers that have data for at least previous 3 years and find the earliest starting date across all Tickers
+Start_Date <- comb_assets %>% 
+    filter(Ticker %in% comb_assets_3_years) %>% 
+    group_by(Ticker) %>% 
+    summarise(date = dplyr::first(date)) %>% 
+    pull(date) %>% 
+    first()
+
+# Unique month end dates for all assets since the start date 
+EOM_dates <- comb_assets %>% 
+    filter(Ticker %in% comb_assets_3_years) %>% 
+    filter(date >= Start_Date) %>% 
+    select(date) %>% 
+    unique() %>% 
+    mutate(YM = format(date, "%Y%B")) %>% 
+    group_by(YM) %>% 
+    filter(date == dplyr::last(date)) %>% 
+    ungroup() %>% 
+    pull(date) %>% 
+    unique()
+
+# get the quarterly rebalance dates from the available dates
+quarterly_rebalance <- rmsfuns::dateconverter(first(EOM_dates), last(EOM_dates), "weekdayEOQ") 
+
+# Create simple returns for all assets which have more than 3 years of prices and are available after the start date
+comb_assets_return <- comb_assets %>% 
+    filter(Ticker %in% comb_assets_3_years) %>% 
+    filter(date >= Start_Date) %>% 
+    group_by(Ticker) %>% 
+    mutate(Return = Price/lag(Price) - 1) %>% 
+    filter(date > dplyr::first(date)) %>% 
+    select(-Price) %>%
+    spread(Ticker, Return)
+
+# Filter out all returns on the Quarterly rebalance dates
+comb_assets_return_quarterly <- comb_assets_return %>% filter(date %in% quarterly_rebalance)
+
+```
+
+
+```{r include=FALSE}
+return_mat <- impute_missing_returns(comb_assets_return, impute_returns_method = "Drawn_Distribution_Collective")
+
+sum(is.na(comb_assets_return))
+# Since there are no missing values we do not need to impute
+
+# Create returns matrix
+return_mat_Nodate <- data.matrix(return_mat[, -1])
+```
+
+
+```{r include=FALSE}
+HTT <- fitHeavyTail::fit_mvt(return_mat_Nodate)
+
+mu <- return_mat %>% summarise(across(-date, ~prod(1+.)^(1/n())-1)) %>% purrr::as_vector()
+Sigma <- HTT$cov
+
+# Ensure order is the same for mu and Sigma (some optimizers are sensitive to ordering... :( )
+mu <- mu[colnames(Sigma)] 
+```
+
+
+```{r include=FALSE}
+# Purely for safety reasons, to avoid a non-positive definite matrix breaking your function...
+Sigma <- as.matrix( Matrix::nearPD(Sigma)$mat)
+```
+
+
+```{r include=FALSE}
+# Create constraints
+
+NStocks <- ncol(return_mat_Nodate)
+NEquities <- 4
+NCreditBonds <- 6
+LB = 0.001 # No lower bound
+UB = 0.4 # Upper bound for single asset
+Equities = 0.6 # Equity Upper Bound
+CreditBonds = 0.25 # Credit and Bonds Upper Bound
+meq = 1 
+
+Equities_vec <- c(rep(0, NStocks-NEquities), -rep(1, NEquities))
+Credit_Bonds_vec <- c(rep(0, NStocks-NEquities-NCreditBonds), -rep(1, NCreditBonds), rep(0, NEquities))
+
+bvec <- c(1, rep(LB, NStocks), -rep(UB, NStocks), -CreditBonds, -Equities)
+Amat <- cbind(1, diag(NStocks), -diag(NStocks), Credit_Bonds_vec, Equities_vec)
+
+```
+
+
+```{r include=FALSE}
+# And now we are ready to combine this all into getting optimal weights given these constraints:
+  
+# we will use the quadprog package"
+w.opt <- quadprog::solve.QP(Dmat = Sigma,
+                            dvec = mu, 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)$solution
+
+result.QP <- tibble(stocks = colnames(Sigma), weight = w.opt) 
+
+```
+
+
+```{r include=FALSE}
+optim_foo <- function(Type = "mv", mu, Sigma, bvec, Amat, printmsg = TRUE){
+
+    Safe_Optim <- purrr::safely(quadprog::solve.QP)
+    
+    if(Type == "mv"){ 
+        Opt_W <- Safe_Optim(Dmat = Sigma,
+                            dvec = mu, 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)
+    }
+    if(Type == "minvol"){
+        Opt_W <- Safe_Optim(Dmat = Sigma,
+                            dvec = rep(0, nrow(Sigma)), 
+                            Amat = Amat,
+                            bvec = bvec, 
+                            meq = meq)
+    }
+    if(Type == "maxdecor"){
+        Rho <- cov2cor(Sigma)
+        Opt_W <- Safe_Optim(Dmat = Rho,
+                            dvec = rep(0, nrow(Sigma)), 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)
+    }
+    if(Type == "sharpe"){
+        Amat[,1] <- mu
+        Opt_W <- Safe_Optim(Dmat = Sigma,
+                            dvec = rep(0, nrow(Sigma)), 
+                            Amat = Amat, 
+                            bvec = bvec, 
+                            meq = meq)
+    }
+
+    if( is.null(Opt_W$error)){
+        optimw <- tibble(Tickers = colnames(Sigma), weights = Opt_W$result$solution) %>% 
+        # Take note:
+        rename(!!Type := weights)
+  
+        if(printmsg)   optimw <- optimw %>% mutate(Result = glue::glue("Converged: {Type}"))
+  
+    } else {
+        optimw <- tibble(Tickers = colnames(Sigma), weights = 1/ncol(Sigma)) %>% 
+        # Take note:
+        rename(!!Type := weights)
+        
+        if(printmsg)   optimw <- optimw %>% mutate(Result = glue::glue("Failed to Converge: {Type}"))
+        }
+     optimw
+}
+
+
+My_Weights <- optim_foo(Type = "maxdecor", mu, Sigma, bvec = bvec, Amat = Amat, printmsg = T)
+
+My_Weights
+
+```
+
+
+```{r include=FALSE}
+# Create Rolling function
+Roll_optimizer <- function(return_mat, EOM_datevec, LookBackSel = 24, Amat, bvec){
+    return_df_used <- return_mat %>% filter(date >= fmxdat::safe_month_min(EOM_datevec, LookBackSel))
+    
+    if(return_df_used %>% nrow() < LookBackSel) return(NULL) # return NULL effectively skips the iteration when binding....
+    return_mat_Nodate <- data.matrix(return_mat[, -1])
+
+    # Calculate Sigma and mu
+    HTT <- fitHeavyTail::fit_mvt(return_mat_Nodate)
+    mu <- HTT$mu
+    Sigma <- HTT$cov
+    
+    Sigma <- as.matrix(Matrix::nearPD(Sigma)$mat)
+    
+    # Fit optimisation function with different types
+    My_Weights <- left_join(
+        optim_foo(Type = "mv", mu, Sigma, bvec, Amat, printmsg = F), 
+        optim_foo(Type = "minvol", mu, Sigma, bvec, Amat, printmsg = F), 
+        by = "Tickers") %>% 
+            left_join(., optim_foo(Type = "maxdecor", mu, Sigma, bvec, Amat, printmsg = F), by = "Tickers") %>% 
+                left_join(., optim_foo(Type = "sharpe", mu, Sigma, bvec, Amat, printmsg = F), by = "Tickers") %>% 
+        mutate(date = EOM_datevec , Look_Back_Period = LookBackSel)
+}
+
+# Calculate optimal rolling weights for each type of portfolio optimization
+Result <- quarterly_rebalance %>% map_df(~Roll_optimizer(return_mat, EOM_datevec = ., Amat = Amat, bvec = bvec, LookBackSel = 24))
+
+Result
+```
+
+Graph result over time 
+
+```{r}
+mv_weights <- Result %>% select(date, Tickers, mv) %>% spread(., key = Tickers, value = mv)
+minvol_weights <- Result %>% select(date, Tickers, minvol) %>% spread(., key = Tickers, value = minvol)
+maxdecor_weights <- Result %>% select(date, Tickers, maxdecor) %>% spread(., key = Tickers, value = maxdecor)
+sharpe_weights <- Result %>% select(date, Tickers, sharpe) %>% spread(., key = Tickers, value = sharpe)
+
+mv_weights %>% 
+  tbl_xts() %>% 
+  #.[endpoints(.,'months')] %>% 
+  chart.StackedBar()
+```
+
+Now find the portfolio return for all the different types of weightings.
+
+```{r}
+# returns of the data
+return_mat_xts <- return_mat %>% filter(date %in% quarterly_rebalance) %>% tbl_xts()
+
+# Portfolio returns for mv weights
+mv_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = mv_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
+
+mv_RetPort_ret <- mv_RetPort$returns %>% xts_tbl() %>% rename(mv_ret = portfolio.returns)
+
+# Portfolio returns for mv weights
+minvol_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = minvol_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
+
+minvol_RetPort_ret <- minvol_RetPort$returns %>% xts_tbl() %>% rename(minvol_ret = portfolio.returns) %>% select(-date)
+
+# Portfolio returns for mv weights
+sharpe_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = sharpe_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
+
+sharpe_RetPort_ret <- sharpe_RetPort$returns %>% xts_tbl() %>% rename(sharpe_ret = portfolio.returns) %>% select(-date)
+
+# Portfolio returns for mv weights
+maxdecor_RetPort <-rmsfuns::Safe_Return.portfolio(return_mat_xts, 
+                               weights = maxdecor_weights %>% tbl_xts(), 
+                               lag_weights = TRUE, 
+                               verbose = TRUE, 
+                               contribution = TRUE, 
+                               value = 1, 
+                               geometric = TRUE)
+
+maxdecor_RetPort_ret <- maxdecor_RetPort$returns %>% xts_tbl() %>% rename(maxdecor_ret = portfolio.returns) %>% select(-date)
+
+portfolio_cum_return <- cbind(mv_RetPort_ret, minvol_RetPort_ret, sharpe_RetPort_ret, maxdecor_RetPort_ret) %>%  
+    pivot_longer(c("mv_ret", "minvol_ret", "sharpe_ret", "maxdecor_ret"), names_to = "Portfolio", values_to = "Returns") %>% 
+    group_by(Portfolio) %>% 
+    mutate(cumreturn_Rand = (cumprod(1 + Returns)))
+
+portfolio_cum_return_plot <- portfolio_cum_return %>% 
+    ggplot() +
+    geom_line(aes(date, cumreturn_Rand, colour = Portfolio), alpha = 0.8) + 
+    fmxdat::fmx_cols() + 
+    labs(title = "Cumulative Returns for different weight portfolio's", y = "Cumulative Returns", x = "") + 
+    fmxdat::theme_fmx(title.size = ggpts(25))
+
+finplot(portfolio_cum_return_plot)
+```
 
 

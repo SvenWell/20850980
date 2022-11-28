@@ -135,6 +135,20 @@
 \IfFileExists{upquote.sty}{\usepackage{upquote}}{}
 
 %%% Include extra packages specified by user
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabu}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
 
 %%% Hard setting column skips for reports - this ensures greater consistency and control over the length settings in the document.
 %% page layout
@@ -224,30 +238,87 @@
 \section{\texorpdfstring{Introduction
 \label{Introduction}}{Introduction }}\label{introduction}}
 
+This report uses the return profiles of different asset classes to
+investigate if diversification ability has decreased in the last decade.
+The main methodology will be with the use of a DCC model allowing for
+correlations between series to vary over time.
+
+\hypertarget{data}{%
+\subsection{Data}\label{data}}
+
+The data I include is the MSCA\_ACWI, EURO\_10Yr, MSCI\_USREIT and the
+Oil\_Brent.
+
+\hypertarget{test-the-data}{%
+\subsection{Test the data}\label{test-the-data}}
+
+First we will look at the March test which indicates that all the MV
+portmanteau tests reject the null of no conditional heteroskedasticity,
+motivating the use of MVGARCH models.
+
+\begin{verbatim}
+## Q(m) of squared series(LM test):  
+## Test statistic:  1.86752  p-value:  0.9972583 
+## Rank-based Test:  
+## Test statistic:  3732.492  p-value:  0 
+## Q_k(m) of squared series:  
+## Test statistic:  8118.375  p-value:  0 
+## Robust Test(5%) :  3741.885  p-value:  0
+\end{verbatim}
+
+\hypertarget{implement-dcc-model}{%
+\subsection{Implement DCC Model}\label{implement-dcc-model}}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-7-1.pdf}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-8-1.pdf}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-9-1.pdf}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-10-1.pdf}
+
+\begin{verbatim}
+## 
+## *------------------------------*
+## *        GO-GARCH Fit          *
+## *------------------------------*
+## 
+## Mean Model       : CONSTANT
+## GARCH Model      : sGARCH
+## Distribution : mvnorm
+## ICA Method       : fastica
+## No. Factors      : 4
+## No. Periods      : 4269
+## Log-Likelihood   : 46768.8
+## ------------------------------------
+## 
+## U (rotation matrix) : 
+## 
+##          [,1]     [,2]     [,3]     [,4]
+## [1,]  0.99998 -0.00172 -0.00608 -0.00117
+## [2,] -0.00239  0.66028 -0.65146  0.37366
+## [3,] -0.00195 -0.66138 -0.26866  0.70028
+## [4,]  0.00564  0.35581  0.70949  0.60827
+## 
+## A (mixing matrix) : 
+## 
+##           [,1]      [,2]    [,3]     [,4]
+## [1,]  0.000159 -3.29e-05 0.01021 -0.00114
+## [2,] -1.540173  2.64e-03 0.00937  0.00180
+## [3,]  0.000227  7.14e-04 0.01093 -0.01676
+## [4,]  0.000240 -2.08e-02 0.00939 -0.00028
+\end{verbatim}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-14-1.pdf}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-15-1.pdf}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-16-1.pdf}
+
+\includegraphics{Question6_files/figure-latex/unnamed-chunk-17-1.pdf}
+
 \hypertarget{conclusion}{%
 \section{Conclusion}\label{conclusion}}
-
-\newpage
-
-\hypertarget{references}{%
-\section*{References}\label{references}}
-\addcontentsline{toc}{section}{References}
-
-\hypertarget{refs}{}
-\begin{CSLReferences}{0}{0}
-\end{CSLReferences}
-
-\hypertarget{appendix}{%
-\section*{Appendix}\label{appendix}}
-\addcontentsline{toc}{section}{Appendix}
-
-\hypertarget{appendix-a}{%
-\subsection*{Appendix A}\label{appendix-a}}
-\addcontentsline{toc}{subsection}{Appendix A}
-
-\hypertarget{appendix-b}{%
-\subsection*{Appendix B}\label{appendix-b}}
-\addcontentsline{toc}{subsection}{Appendix B}
 
 \bibliography{Tex/ref}
 
